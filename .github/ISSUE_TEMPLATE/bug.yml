@@ -1,0 +1,40 @@
+name: Bug report
+description: Reproduce a demo bug and give Codex clear acceptance criteria.
+title: "Bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "A maintainer can add **agent-ready** after reviewing this report. Creating an issue alone does not start paid AI work."
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Describe the observed failure.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open the demo\n2. Enter a barcode\n3. Click Look up"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: "- [ ] The reported scan finds the correct product\n- [ ] Add a regression test\n- [ ] npm run check passes"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and context
+      value: "Limit this fix to the demo and its tests. Workflows, credentials, and repository settings are out of scope."

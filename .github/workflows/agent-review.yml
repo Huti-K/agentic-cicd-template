@@ -1,0 +1,124 @@
+name: Codex independent review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
+      head: ${{ steps.pr.outputs.head }}
+      base: ${{ steps.pr.outputs.base }}
+      metadata: ${{ steps.pr.outputs.metadata }}
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        id: pr
+        with:
+          script: |
+            const number = Number(context.payload.pull_request?.number ?? context.payload.inputs?.pr_number);
+            if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (pr.state !== 'open' || pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) throw new Error('Only open, same-repository PRs may use the API secret.');
+            core.setOutput('number', String(number));
+            core.setOutput('head', pr.head.sha);
+            core.setOutput('base', pr.base.sha);
+            core.setOutput('metadata', JSON.stringify({ title: pr.title, body: pr.body, head: pr.head.sha, base: pr.base.sha }));
+            await github.rest.repos.createCommitStatus({ ...context.repo, sha: pr.head.sha, state: 'pending', context: 'AI review', description: 'Independent Codex review is running' });
+  review:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.codex.outputs.final-message }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare exact PR diff without checking out or executing candidate code
+        env:
+          PR_NUMBER: ${{ needs.prepare.outputs.number }}
+          EXPECTED_HEAD: ${{ needs.prepare.outputs.head }}
+          PR_JSON: ${{ needs.prepare.outputs.metadata }}
+        run: |
+          git fetch origin "pull/$PR_NUMBER/head:refs/remotes/origin/review-head"
+          test "$(git rev-parse refs/remotes/origin/review-head)" = "$EXPECTED_HEAD"
+          mkdir -p .agent-output
+          git diff HEAD...refs/remotes/origin/review-head > .agent-output/change.diff
+          node -e "require('fs').writeFileSync('.agent-output/pr.json', process.env.PR_JSON)"
+      - name: Check credential configuration
+        env:
+          KEY_CONFIGURED: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: |
+          if [ "$KEY_CONFIGURED" != true ]; then
+            echo '::error::OPENAI_API_KEY is missing.'
+            exit 1
+          fi
+      - name: Independent Codex review
+        id: codex
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/review.md
+          codex-args: '["--output-schema", ".github/codex/review.schema.json"]'
+          sandbox: read-only
+          safety-strategy: drop-sudo
+          model: ${{ vars.CODEX_MODEL }}
+          effort: medium
+          allow-bots: true
+  report:
+    if: always() && needs.prepare.result == 'success'
+    needs: [prepare, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RESULT: ${{ needs.review.outputs.result }}
+          REVIEW_JOB: ${{ needs.review.result }}
+          PR_NUMBER: ${{ needs.prepare.outputs.number }}
+          REVIEWED_HEAD: ${{ needs.prepare.outputs.head }}
+        with:
+          script: |
+            const number = Number(process.env.PR_NUMBER);
+            const head = process.env.REVIEWED_HEAD;
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (pr.head.sha !== head) { core.notice('PR changed; discarding stale review.'); return; }
+            let state = 'error';
+            let body = 'Codex review did not complete. Check the workflow logs and rerun after resolving the failure.';
+            if (process.env.REVIEW_JOB === 'success') {
+              try {
+                const result = JSON.parse(process.env.RESULT);
+                if (!['pass', 'needs_changes'].includes(result.verdict) || typeof result.summary !== 'string' || !Array.isArray(result.findings)) throw new Error('Invalid review format');
+                state = result.verdict === 'pass' && result.findings.length === 0 ? 'success' : 'failure';
+                body = result.summary + '\n\n' + result.findings.map(f => `- **${f.severity}** — ${f.path}:${f.line}: ${f.description}`).join('\n');
+              } catch { body = 'Codex returned an invalid review result. Inspect the workflow and rerun; this is not a passing review.'; }
+            }
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.pulls.createReview({ ...context.repo, pull_number: number, commit_id: head, event: 'COMMENT', body: (`## Independent Codex review\n\n${body}\n\nReviewed commit: ${head}\n[Review run](${url})\n\nAI feedback supports the human merge decision.`).slice(0,60000) });
+            await github.rest.repos.createCommitStatus({ ...context.repo, sha: head, state, context: 'AI review', target_url: url, description: state === 'success' ? 'No actionable defects reported' : 'Review needs attention; inspect the report' });
+            if (state !== 'success') core.setFailed('AI review did not pass.');
