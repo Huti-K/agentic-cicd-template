@@ -23,6 +23,8 @@ Fork contributions receive ordinary secret-free CI. A required AI review status 
 - **GitHub Actions is not permitted to create PRs:** enable “Allow GitHub Actions to create and approve pull requests” under Actions → General. `scripts/setup-github.sh` configures this via the API.
 - **Duplicate issue run:** an open `agent/issue-N` PR blocks another implementation. Update that PR or close it before a fresh run.
 - **No CI on a bot PR:** inspect the publisher's dispatch step. Both the PR branch CI and base-branch review dispatch must succeed.
+- **GitHub asks to approve workflows on a bot PR:** inspect the patch, then use **Approve and run workflows**. Explicitly dispatched checks still run separately; this repository does not disable GitHub's approval policy.
+- **Dependabot PR has no AI review:** dispatch **Codex independent review** manually as a maintainer. Dependabot-triggered runs cannot read Actions secrets and are excluded from automatic AI review.
 - **Review became stale:** a newer commit arrived. Run a new review; the previous result is deliberately discarded.
 - **Pages deployment skipped:** set Pages build source to GitHub Actions and the repository variable `PAGES_ENABLED=true`, or run setup with `--pages`.
 - **GitHub Pages 404 immediately after deployment:** allow the CDN to update and open the repository subpath, not the account root.
