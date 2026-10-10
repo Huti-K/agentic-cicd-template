@@ -5,7 +5,7 @@ export const catalog = [
 ];
 
 export function findProduct(products, input) {
-  const barcode = String(Number(String(input).trim()));
+  const barcode = String(input).trim();
   return products.find((product) => product.barcode === barcode) ?? null;
 }
 

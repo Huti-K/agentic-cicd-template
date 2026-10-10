@@ -5,6 +5,20 @@ import { catalog, findProduct, inventorySummary, updateStock } from '../../demo/
 test('finds the scanner by its barcode', () => {
   assert.equal(findProduct(catalog, '4006381333931').name, 'Handheld scanner');
 });
+for (const input of ['0123456789012', ' 0123456789012 ']) {
+  test(`finds the label roll with barcode ${JSON.stringify(input)}`, () => {
+    const product = findProduct(catalog, input);
+    assert.ok(product);
+    assert.equal(product.name, 'Thermal label roll');
+    assert.equal(product.stock, 24);
+  });
+}
+for (const input of ['123456789012', '4.006381333931e12', '4006381333931.0', '', '   ']) {
+  test(`does not alias a barcode from ${JSON.stringify(input)}`, () => {
+    const products = [...catalog, { barcode: '0', name: 'Zero barcode', stock: 1 }];
+    assert.equal(findProduct(products, input), null);
+  });
+}
 test('unknown scans return null', () => {
   assert.equal(findProduct(catalog, '9999999999999'), null);
 });
