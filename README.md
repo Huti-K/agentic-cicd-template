@@ -43,7 +43,7 @@ Click **Use this template** on GitHub, create your repository, and clone it. The
 5. Set a repository variable **CODEX_MODEL** if you want an explicit model. Otherwise the Codex CLI selects its default. Both implementation and review use medium reasoning effort.
 6. In Settings → Branches, require the **verify** and **AI review** checks before merging. For a solo-owned repository you can merge your own PR after checking the evidence; AI comments do not count as human approvals.
 
-Actions are pinned to commit SHAs, with Dependabot updates enabled. Codex CLI itself follows the action's default version unless you pin `codex-version` in both agent workflows.
+Actions are pinned to commit SHAs, with weekly Dependabot updates grouped into one PR. Dependabot events do not receive Actions secrets, so a maintainer must dispatch AI review manually for those PRs. Codex CLI itself follows the action's default version unless you pin `codex-version` in both agent workflows.
 
 ## What runs where
 
