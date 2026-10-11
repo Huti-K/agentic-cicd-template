@@ -81,6 +81,29 @@ test('GitHub repository metadata uses the canonical endpoint without a trailing 
     assert.deepEqual(urls, ['https://api.github.com/repos/owner/relay', 'https://api.github.com/repos/owner/relay/commits/main']);
   } finally { globalThis.fetch = originalFetch; }
 });
+test('trusted platform callbacks retry transient failures with identical data, but never stale/auth responses or GitHub writes', async () => {
+  const originalFetch = globalThis.fetch;
+  const env = { RELAY_URL: 'https://relay.example', RELAY_CALLBACK_SECRET: 'fixture', GITHUB_REPOSITORY: 'owner/relay', GITHUB_RUN_ID: '123' };
+  const body = { status: 'succeeded', runId: '123', pullRequest: { number: 42, headSha: sha } };
+  try {
+    for (const failure of [new TypeError('Connection lost'), new DOMException('Timed out', 'TimeoutError'), 503, 429]) {
+      const requests = [], delays = [];
+      const fetcher = async (url, options) => { requests.push(options.body); if (requests.length > 1) return Response.json({ ok: true, duplicate: true }); if (failure instanceof Error) throw failure; return new Response(null, { status: failure }); };
+      globalThis.fetch = fetcher;
+      const api = clients(env, { fetcher, sleep: async ms => delays.push(ms) });
+      assert.deepEqual(await api.platform('/api/automation/jobs/job-1', body), { ok: true, duplicate: true });
+      assert.deepEqual(requests, [JSON.stringify(body), JSON.stringify(body)]);
+      assert.deepEqual(delays, [500]);
+    }
+    for (const [status, target, attempts] of [[503, 'platform', 3], [409, 'platform', 1], [401, 'platform', 1], [503, 'github', 1]]) {
+      let calls = 0; const delays = [];
+      const fetcher = async () => { calls++; return new Response(null, { status }); };
+      const api = clients(env, { fetcher, sleep: async ms => delays.push(ms) });
+      await assert.rejects(api[target]('/api/automation/jobs/job-1', body), error => error.status === status);
+      assert.equal(calls, attempts); assert.deepEqual(delays, attempts === 3 ? [500, 1000] : []);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 const workflow = parse(await readFile('.github/workflows/relay-agent.yml', 'utf8'));
 test('AI/candidate jobs never receive callback/deployment or GitHub write credentials', () => {
