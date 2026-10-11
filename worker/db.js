@@ -31,26 +31,30 @@ export class Store {
   async job(id){const row=await this.db.prepare('SELECT * FROM jobs WHERE id=?').bind(id).first();if(!row)throw new HttpError(404,'Agent job not found.');return this.jobRow(row);}
   async jobs(ticketId){const statement=ticketId?this.db.prepare('SELECT * FROM jobs WHERE ticket_id=? ORDER BY created_at DESC LIMIT 40').bind(ticketId):this.db.prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 100');const {results}=await statement.all();return results.map(row=>this.jobRow(row));}
   async createJob(ticket,kind,baseSha){
-    const id=crypto.randomUUID(),at=now(),data={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,evidence:[]};
+    const id=crypto.randomUUID(),at=now(),data={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,requestRevision:ticket.requestRevision||0,evidence:[]};
     try{await this.db.prepare('INSERT INTO jobs(id,ticket_id,kind,status,data,created_at,updated_at) VALUES(?,?,?,\'queued\',?,?,?)').bind(id,ticket.id,kind,JSON.stringify(data),at,at).run();}
     catch(error){if(String(error).includes('UNIQUE'))throw new HttpError(409,'An agent is already working on this ticket.','job_active');throw error;}
     return this.job(id);
   }
   async startJob(ticket,kind,baseSha){
     const id=crypto.randomUUID(),at=now();
-    const job={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,evidence:[],consumedPending:ticket.pendingAgent||null,dispatchState:'pending',dispatchUntil:0};
+    const job={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,requestRevision:ticket.requestRevision||0,evidence:[],consumedPending:ticket.pendingAgent||null,dispatchState:'pending',dispatchUntil:0};
     const data={...ticket,status:kind==='triage'?'triaging':kind==='implement'?'implementing':'in_review',activeJobId:id,pendingAgent:null,error:null,contributorIds:[...new Set([...ticket.contributorIds,'ai'])]};
     for(const key of ['version','id','createdAt','updatedAt'])delete data[key];
     let results;
     try{results=await this.db.batch([
-      this.db.prepare('UPDATE tickets SET data=?,version=version+1,updated_at=? WHERE number=? AND version=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE ticket_id=? AND status IN (\'queued\',\'running\')) RETURNING *')
+      this.db.prepare('UPDATE tickets SET data=?,version=version+1,updated_at=? WHERE number=? AND version=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE ticket_id=? AND status IN (\'queued\',\'running\')) AND (SELECT COUNT(*) FROM jobs WHERE status IN (\'queued\',\'running\'))<3 RETURNING *')
         .bind(JSON.stringify(data),at,ticketNumber(ticket.id),ticket.version,ticket.id),
       this.db.prepare('INSERT INTO jobs(id,ticket_id,kind,status,data,created_at,updated_at) SELECT ?,?,?,\'queued\',?,?,? WHERE EXISTS(SELECT 1 FROM tickets WHERE number=? AND json_extract(data,\'$.activeJobId\')=?) RETURNING *')
         .bind(id,ticket.id,kind,JSON.stringify(job),at,at,ticketNumber(ticket.id),id),
       this.db.prepare('INSERT INTO comments(id,ticket_id,author_id,body,kind,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM jobs WHERE id=?)')
         .bind(crypto.randomUUID(),ticket.id,'ai',(kind==='triage'?'Triage':kind==='implement'?'Implementation':'Evidence')+' agent queued in GitHub Actions.','event',at,id),
     ]);}catch(error){if(String(error).includes('UNIQUE'))throw new HttpError(409,'An agent is already working on this ticket.','job_active');throw error;}
-    if(results[0].results.length!==1||results[1].results.length!==1)throw new HttpError(409,'The ticket changed before its agent could start. Retry the action.','version_conflict');
+    if(results[0].results.length!==1||results[1].results.length!==1){
+      const active=await this.db.prepare('SELECT COUNT(*) AS count FROM jobs WHERE status IN (\'queued\',\'running\')').first();
+      if(active.count>=3)throw new HttpError(429,'Three agents are already running. Try again when one finishes.','agent_capacity');
+      throw new HttpError(409,'The ticket changed before its agent could start. Retry the action.','version_conflict');
+    }
     return {ticket:this.ticketRow(results[0].results[0]),job:this.jobRow(results[1].results[0])};
   }
   async claimDispatch(job){

@@ -249,3 +249,65 @@ test('automation snapshots retain the latest comments after the discussion reach
   assert.equal(snapshot.data.comments.length, 300);
   assert.ok(snapshot.data.comments.some(comment => comment.body.includes('newest acceptance criterion')));
 });
+
+test('substantive request edits invalidate a reviewed PR until fresh implementation and evidence complete', async context => {
+  const { api, store, ticket: original } = await review(context);
+  const oldEvidence = await store.createJob(original, 'evidence', BASE_SHA);
+  await store.updateJob(oldEvidence, { status: 'succeeded', evidence: [{ kind: 'video' }], headSha: PR_SHA });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+  for (const change of [{ title: 'Support Safari too' }, { description: 'Also retain draft focus across route changes.' }, { type: 'feature' }]) {
+    const current = await store.ticket('RLY-1');
+    const edited = await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, ...change } });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.data.pullRequest.canMerge, false);
+    assert.equal(edited.data.pullRequest.evidenceReady, false);
+    assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).status, 409);
+    assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).status, 409);
+  }
+  assert.equal(api.github.dispatches.length, 0, 'editing must not start paid automation');
+  assert.equal(api.github.mergeCalls, 0);
+  const current = await store.ticket('RLY-1');
+  assert.equal(current.requestRevision, 3);
+  const metadata = await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, priority: 'urgent', tags: ['accessibility'] } });
+  assert.equal(metadata.data.ticket.requestRevision, 3, 'metadata changes do not invalidate implementation');
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal(started.status, 200);
+  const implementation = started.data.jobs[0];
+  assert.equal((await store.job(implementation.id)).requestRevision, 3);
+  assert.equal((await api.callback(implementation.id, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).implementedRequestRevision, 3);
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, false, 'fresh implementation still requires fresh evidence');
+  const evidence = (await store.jobs('RLY-1')).find(job => job.status === 'queued');
+  await store.updateJob(evidence, { status: 'succeeded', evidence: [{ kind: 'video' }], headSha: PR_SHA });
+  await store.update(await store.ticket('RLY-1'), { activeJobId: null });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+});
+
+test('editing and reverting a request still rejects an older implementation callback', async context => {
+  const { api, store, ticket: original } = await review(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  for (const title of ['Temporary clarified request', original.title]) {
+    const current = await store.ticket('RLY-1');
+    assert.equal((await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, title } })).status, 200);
+  }
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 409);
+  assert.equal((await store.job(started.data.jobs[0].id)).status, 'queued');
+});
+
+test('concurrent agent requests compete atomically for the final global slot', async context => {
+  const { api, store } = await setup(context);
+  const tickets = [];
+  for (let index = 0; index < 4; index++) tickets.push((await api.createTicket({ title: 'Capacity ticket '+index })).data.ticket);
+  await store.startJob(tickets[0], 'triage', BASE_SHA);
+  await store.startJob(tickets[1], 'triage', BASE_SHA);
+  const results = await Promise.allSettled(tickets.slice(2).map(item => store.startJob(item, 'triage', BASE_SHA)));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  const rejected = results.find(result => result.status === 'rejected');
+  assert.equal(rejected.reason.status, 429);
+  assert.equal(rejected.reason.code, 'agent_capacity');
+  assert.equal((await store.jobs()).filter(job => ['queued','running'].includes(job.status)).length, 3);
+  const loser = tickets[results.findIndex(result => result.status === 'rejected')+2];
+  const unchanged = await store.ticket(loser.id);
+  assert.equal(unchanged.version, loser.version);
+  assert.equal(unchanged.activeJobId, null);
+});

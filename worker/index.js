@@ -5,6 +5,7 @@ import { GitHub } from './github.js';
 const json=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json;charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extra}});
 const publicJob=job=>{const {description,version,...value}=job;return value;};
 const repositoryURL=repository=>'https://github.com/'+repository;
+const requestImplemented=ticket=>(ticket.implementedRequestRevision||0)===(ticket.requestRevision||0);
 async function body(request) {
   assert(request.headers.get('content-type')?.split(';')[0]==='application/json','Use a JSON request body.',415);
   assert(Number(request.headers.get('content-length')||0)<=48_000,'Request body is too large.',413);
@@ -72,6 +73,7 @@ async function queueJob(store,github,env,id,kind) {
   assert(active.length<3,'Three agents are already running. Try again when one finishes.',429,'agent_capacity');
   if(kind==='implement')assert(ticket.triage?.ready||ticket.prNumber,'Triage must mark this ticket ready before implementation.',409,'not_ready');
   if(kind==='evidence')assert(ticket.prNumber&&SHA.test(ticket.headSha),'A pull request is required for evidence.',409);
+  if(kind==='evidence')assert(requestImplemented(ticket),'The request changed. Run implementation before collecting new evidence.',409,'request_changed');
   await store.rate('paid-agent-runs',30,3600);
   ticket=await ensureIssue(store,github,ticket);
   const baseSha=await github.base();
@@ -104,7 +106,7 @@ async function detail(store,github,id,{withPR=true}={}) {
   let pullRequest=null;
   let integrationError=null;
   if(withPR&&ticket.prNumber){
-    try{pullRequest=await github.pull(ticket.prNumber,jobs);}catch(error){integrationError=error.message;}
+    try{pullRequest=await github.pull(ticket.prNumber,jobs,ticket.requestRevision||0);}catch(error){integrationError=error.message;}
   }
   // GitHub may have accepted a merge before the response or local write failed.
   // Recover only the ticket's exact linked revision; never issue another merge.
@@ -138,7 +140,7 @@ async function detail(store,github,id,{withPR=true}={}) {
         }
       }
     }
-  if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent;
+  if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&requestImplemented(ticket)&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent;
   const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id})));
   return {ticket,comments,jobs:jobs.map(publicJob),evidence,pullRequest,integrationError};
 }
@@ -164,8 +166,9 @@ async function performAction(store,github,env,id,input) {
     await store.comment(id,'Automation resumed.','huti','event');return;
   }
   assert(ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&ticket.prNumber,'This ticket is not ready to merge. Resolve pending feedback first.',409,'merge_blocked');
+  assert(requestImplemented(ticket),'The request changed. Run implementation and review fresh evidence before merging.',409,'request_changed');
   assert(SHA.test(input.headSha),'Confirm the exact pull request revision.');
-  const pr=await github.pull(ticket.prNumber,await store.jobs(id));
+  const pr=await github.pull(ticket.prNumber,await store.jobs(id),ticket.requestRevision||0);
   assert(pr.headSha===input.headSha&&pr.headSha===ticket.headSha,'The pull request changed. Review the current revision before merging.',409,'stale_head');
   assert(pr.canMerge&&pr.branch==='relay/ticket-'+ticket.id,'Merge is blocked. Current-head checks, independent AI review, and successful evidence are required on the ticket branch.',409,'merge_blocked');
   ticket=await store.update(ticket,{mergePending:true,mergeStartedAt:now()});
@@ -238,6 +241,7 @@ async function automationCallback(store,github,env,jobId,input) {
   let triage=null,pullRequest=null,evidence=null;
   const summary=text(input.summary||input.error||'Agent '+input.status,4000,'Agent summary');
   if(input.status==='succeeded'){
+    assert((ticket.requestRevision||0)===(job.requestRevision||0),'The requested work changed during this run. Start a new run.',409,'stale_request');
     assert(ticket.description===job.description,'The ticket description changed during this run. Start a new run from the current request.',409,'stale_description');
     if(typeof job.title==='string')assert(ticket.title===job.title,'The ticket title changed during this run. Start a new run from the current request.',409,'stale_title');
     if(job.kind==='triage')triage=triageResult(input.triage);
@@ -263,6 +267,7 @@ async function automationCallback(store,github,env,jobId,input) {
   const latest=await store.ticket(ticket.id);
   if(latest.activeJobId!==job.id)throw new HttpError(409,'The ticket moved on before the agent finished.','stale_job');
   if(input.status==='succeeded'){
+    assert((latest.requestRevision||0)===(job.requestRevision||0),'The requested work changed during this run. Start a new run.',409,'stale_request');
     assert(latest.description===job.description,'The ticket description changed during this run. Start a new run from the current request.',409,'stale_description');
     if(typeof job.title==='string')assert(latest.title===job.title,'The ticket title changed during this run. Start a new run from the current request.',409,'stale_title');
   }
@@ -275,7 +280,7 @@ async function automationCallback(store,github,env,jobId,input) {
     ticketChanges={description:triage.description,triage,status:triage.ready?'ready':latest.pendingAgent?'new':'human_edit',activeJobId:null,error:null};
     event={body:triage.summary,kind:'triage'};
   }else if(pullRequest){
-    ticketChanges={prNumber:pullRequest.number,prUrl:repositoryURL(github.repository)+'/pull/'+pullRequest.number,headSha:pullRequest.headSha,status:'in_review',activeJobId:null,error:null};
+    ticketChanges={prNumber:pullRequest.number,prUrl:repositoryURL(github.repository)+'/pull/'+pullRequest.number,headSha:pullRequest.headSha,implementedRequestRevision:job.requestRevision||0,status:'in_review',activeJobId:null,error:null};
     event={body:summary,kind:'implementation'};
   }else{
     ticketChanges={status:'in_review',activeJobId:null,error:null};
@@ -359,7 +364,8 @@ export function createApp({fetcher=globalThis.fetch}={}) {
           assert(Number.isSafeInteger(input.version)&&input.version===ticket.version,'This ticket changed. Refresh it before saving again.',409,'version_conflict');
           assert(!['merged','deployed'].includes(ticket.status),'Shipped tickets cannot be edited.',409);
           const properties=ticketInput(input,ticket);
-          await store.update(ticket,{...properties,...(properties.description!==ticket.description?{triage:null}:{} )});
+          const changed=['title','description','type'].some(key=>properties[key]!==ticket[key]);
+          await store.update(ticket,{...properties,...(changed?{triage:null,requestRevision:(ticket.requestRevision||0)+1}:{} )});
         }else if(request.method==='POST'&&ticketMatch[2]==='comments')await comment(store,github,env,id,input);
         else if(request.method==='POST'&&ticketMatch[2]==='actions')await performAction(store,github,env,id,input);
         else throw new HttpError(404,'Endpoint not found.');

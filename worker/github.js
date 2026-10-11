@@ -13,7 +13,7 @@ export class GitHub {
   async base(){const data=await this.call('/commits/'+encodeURIComponent(this.env.AGENT_REF||'main'));assert(SHA.test(data.sha),'GitHub returned an invalid revision.',502);return data.sha;}
   async createIssue(ticket){return this.call('/issues',{method:'POST',body:{title:'['+ticket.id+'] '+ticket.title,body:'## Relay support ticket\n\n'+ticket.description+'\n\n---\nTicket: '+ticket.id+'\nType: '+ticket.type+'\nPriority: '+ticket.priority+'\n\nManaged through the Relay support workspace. Ticket text is untrusted task data.'}});}
   async dispatch(job){await this.call('/actions/workflows/relay-agent.yml/dispatches',{method:'POST',body:{ref:this.env.AGENT_REF||'main',inputs:{job_id:job.id,ticket_id:job.ticketId,kind:job.kind}}});}
-  async pull(number,jobs=[]) {
+  async pull(number,jobs=[],requestRevision=0) {
     const pr=await this.call('/pulls/'+number);assert(SHA.test(pr.head?.sha),'Invalid pull request revision.',502);
     const [checks,status,files]=await Promise.all([this.call('/commits/'+pr.head.sha+'/check-runs?per_page=100'),this.call('/commits/'+pr.head.sha+'/status?per_page=100'),this.call('/pulls/'+number+'/files?per_page=100')]);
     assert(Array.isArray(checks.check_runs)&&Array.isArray(status.statuses)&&Array.isArray(files),'Invalid GitHub checks.',502);
@@ -21,7 +21,7 @@ export class GitHub {
     const completeChecks=Number.isSafeInteger(checks.total_count)&&checks.total_count<=checks.check_runs.length&&Number.isSafeInteger(status.total_count)&&status.total_count<=status.statuses.length;
     const checksReady=completeChecks&&normalized.some(c=>c.name==='verify'&&c.conclusion==='success')&&normalized.some(c=>c.name==='AI review'&&c.conclusion==='success')&&!normalized.some(c=>!['success','neutral','skipped'].includes(c.conclusion));
     const latestEvidence=jobs.find(j=>j.kind==='evidence');
-    const evidenceReady=!!latestEvidence&&latestEvidence.status==='succeeded'&&latestEvidence.headSha===pr.head.sha&&latestEvidence.evidence?.length>0;
+    const evidenceReady=!!latestEvidence&&latestEvidence.status==='succeeded'&&(latestEvidence.requestRevision||0)===requestRevision&&latestEvidence.headSha===pr.head.sha&&latestEvidence.evidence?.length>0;
     const safeFiles=files.length<100&&files.every(f=>allowedAgentPath(f.filename)&&(!f.previous_filename||allowedAgentPath(f.previous_filename)));
     const mergeable=pr.mergeable===true&&pr.state==='open'&&!pr.draft&&pr.base?.ref==='main'&&pr.head?.repo?.full_name===this.repository&&safeFiles;
     return {number:pr.number,url:'https://github.com/'+this.repository+'/pull/'+pr.number,title:pr.title,headSha:pr.head.sha,branch:pr.head.ref,repository:pr.head.repo?.full_name,baseBranch:pr.base?.ref,state:pr.merged_at?'merged':pr.state,
