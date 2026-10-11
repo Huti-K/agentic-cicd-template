@@ -59,7 +59,14 @@ export async function recoverPublication(api, value) {
   let ref;
   try { ref = await api.github(`git/ref/heads/${value.branch}`); } catch (error) { if (error.status === 404) return; throw error; }
   if (!SHA.test(ref.object?.sha) || ref.object?.type !== 'commit') throw new Error('Invalid recoverable branch.');
-  const comparison = await api.github(`compare/${value.baseSha}...${ref.object.sha}`);
+  let comparison = await api.github(`compare/${value.baseSha}...${ref.object.sha}`);
+  if (comparison.status === 'diverged') {
+    const base = comparison.merge_base_commit?.sha;
+    if (!SHA.test(base)) throw new Error('Orphan branch has an unrelated base.');
+    const history = await api.github(`compare/${base}...${value.baseSha}`);
+    if (!['ahead', 'identical'].includes(history.status)) throw new Error('Orphan branch has an unrelated base.');
+    comparison = await api.github(`compare/${base}...${ref.object.sha}`);
+  }
   if (!['ahead', 'identical'].includes(comparison.status) || !Array.isArray(comparison.files) || comparison.files.length > 30
     || comparison.files.some(file => !allowedPath(file.filename) || (file.previous_filename && !allowedPath(file.previous_filename)))) throw new Error('Orphan branch changes protected files or has an unrelated base.');
   const tree = await api.github(`git/trees/${ref.object.sha}?recursive=1`);

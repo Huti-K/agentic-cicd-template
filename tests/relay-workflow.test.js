@@ -256,11 +256,17 @@ test('retries recover an orphan ticket PR/branch but never unrelated or protecte
   files[0].filename = 'demo/app.js'; tree.tree[0].mode = '120000';
   await assert.rejects(recoverPublication(api, fixture()), /unsafe/);
   tree.tree[0].mode = '100644';
-  let status = 'ahead';
+  let status = 'ahead', mergeBase, historyStatus = 'ahead';
+  const comparisons = [];
   const branchApi = { github: async path => {
     if (path.startsWith('pulls?')) return [];
     if (path.startsWith('git/ref/')) return { object: { sha: nextSha, type: 'commit' } };
-    if (path.startsWith('compare/')) return { status, files };
+    if (path.startsWith('compare/')) {
+      comparisons.push(path);
+      if (path === `compare/${mergeBase}...${sha}`) return { status: historyStatus };
+      if (path === `compare/${mergeBase}...${nextSha}`) return { status: 'ahead', files };
+      return { status, files, merge_base_commit: { sha: mergeBase } };
+    }
     if (path.startsWith('git/trees/')) return tree;
     throw new Error('Unexpected recovery API: ' + path);
   } };
@@ -271,6 +277,16 @@ test('retries recover an orphan ticket PR/branch but never unrelated or protecte
   assert.equal(orphan.recoveredPrNumber, undefined);
   status = 'diverged';
   await assert.rejects(recoverPublication(branchApi, fixture()), /unrelated/);
+  mergeBase = 'c'.repeat(40);
+  const advanced = fixture();
+  await assert.doesNotReject(recoverPublication(branchApi, advanced));
+  assert.equal(advanced.sourceSha, nextSha);
+  assert.ok(comparisons.includes(`compare/${mergeBase}...${sha}`));
+  assert.ok(comparisons.includes(`compare/${mergeBase}...${nextSha}`));
+  historyStatus = 'diverged';
+  await assert.rejects(recoverPublication(branchApi, fixture()), /unrelated/);
+  historyStatus = 'ahead'; files[0].filename = 'worker/index.js';
+  await assert.rejects(recoverPublication(branchApi, fixture()), /protected/);
 });
 
 test('feedback on an existing PR can run after human description edits clear triage, with full head and path guards', async () => {
