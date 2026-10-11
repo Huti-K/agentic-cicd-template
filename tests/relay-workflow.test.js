@@ -71,6 +71,16 @@ test('API client times out and reports bounded errors without reflecting secret 
   assert.doesNotThrow(() => clients(config));
   for (const change of [{ RELAY_URL: 'http://relay.example' }, { RELAY_URL: 'https://user:pass@relay.example' }, { GITHUB_REPOSITORY: '../evil' }, { RELAY_CALLBACK_SECRET: '' }]) assert.throws(() => clients({ ...config, ...change }));
 });
+test('GitHub repository metadata uses the canonical endpoint without a trailing slash', async () => {
+  const originalFetch = globalThis.fetch, urls = [];
+  globalThis.fetch = async url => { urls.push(String(url)); return Response.json({ default_branch: 'main' }); };
+  try {
+    const api = clients({ RELAY_URL: 'https://relay.example', RELAY_CALLBACK_SECRET: 'fixture', GITHUB_REPOSITORY: 'owner/relay', GITHUB_RUN_ID: '123', GH_TOKEN: 'fixture' });
+    await api.github('');
+    await api.github('commits/main');
+    assert.deepEqual(urls, ['https://api.github.com/repos/owner/relay', 'https://api.github.com/repos/owner/relay/commits/main']);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 const workflow = parse(await readFile('.github/workflows/relay-agent.yml', 'utf8'));
 test('AI/candidate jobs never receive callback/deployment or GitHub write credentials', () => {

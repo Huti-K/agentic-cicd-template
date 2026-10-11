@@ -13,6 +13,6 @@ export function clients(env = process.env) {
   if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(env.GITHUB_REPOSITORY) || !/^\d+$/.test(env.GITHUB_RUN_ID)) throw new Error('Invalid GitHub run context.');
   return {
     platform: (path, body) => jsonRequest(new URL(path, platform), { token: env.RELAY_CALLBACK_SECRET, method: body === undefined ? 'GET' : 'POST', body }),
-    github: (path, body, method = body === undefined ? 'GET' : 'POST') => jsonRequest(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/${path}`, { token: env.GH_TOKEN, method, body }),
+    github: (path, body, method = body === undefined ? 'GET' : 'POST') => jsonRequest(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}${path ? `/${path}` : ''}`, { token: env.GH_TOKEN, method, body }),
   };
 }
