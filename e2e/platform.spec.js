@@ -123,6 +123,30 @@ test('background polling keeps an unsent comment and shows genuine triage contex
   expect(api.requests.find(request => request.path.endsWith('/actions')).body).toMatchObject({ action: 'implement' });
 });
 
+for (const priorPR of [false, true]) {
+  test(`triage references stay pinned to the analyzed ${priorPR ? 'PR head' : 'base revision'} after later changes`, async ({ page }) => {
+    const api = await installPlatformAPI(page);
+    const baseSha = 'b'.repeat(40), analyzedHead = 'c'.repeat(40), laterHead = 'd'.repeat(40);
+    api.detail.ticket.headSha = laterHead;
+    api.detail.ticket.triage = {
+      summary: 'The brief references the source inspected during triage.', ready: true,
+      acceptanceCriteria: ['Keep source references pinned to the analyzed revision.'],
+      files: [{ path: 'demo/src/platform.js', reason: 'The relevant browser source.' }],
+      documentation: [{ path: 'docs/ARCHITECTURE.md', reason: 'The corresponding architecture.' }],
+    };
+    // A newer failed run must not change the references from the successful brief.
+    api.detail.jobs = [
+      { id: 'older', kind: 'triage', status: 'succeeded', baseSha: HEAD_SHA, headSha: null, createdAt: '2026-10-12T09:00:00Z' },
+      { id: 'failed', kind: 'triage', status: 'failed', baseSha: laterHead, headSha: laterHead, createdAt: '2026-10-12T11:00:00Z' },
+      { id: 'analyzed', kind: 'triage', status: 'succeeded', baseSha, headSha: priorPR ? analyzedHead : null, createdAt: '2026-10-12T10:00:00Z' },
+    ];
+    await page.goto('/#ticket/RLY-1');
+    const revision = priorPR ? analyzedHead : baseSha;
+    await expect(page.getByRole('link', { name: 'demo/src/platform.js', exact: true })).toHaveAttribute('href', `https://github.com/Huti-K/agentic-cicd-template/blob/${revision}/demo/src/platform.js`);
+    await expect(page.getByRole('link', { name: 'docs/ARCHITECTURE.md', exact: true })).toHaveAttribute('href', `https://github.com/Huti-K/agentic-cicd-template/blob/${revision}/docs/ARCHITECTURE.md`);
+  });
+}
+
 test('feedback launches revision work, while human editing pauses automatic reruns', async ({ page }) => {
   const api = await installPlatformAPI(page, { detail: reviewDetailFixture() });
   await page.goto('/#ticket/RLY-1');

@@ -117,7 +117,11 @@ function descriptionSection(){const t=detail.ticket;return el('section',{class:'
   t.originalDescription&&t.originalDescription!==t.description&&el('details',{class:'original-request'},el('summary',{},'View original request'),el('p',{class:'prose'},t.originalDescription)));
 }
 function triageSection(){const triage=detail.ticket.triage;if(!triage)return el('section',{class:'triage-empty'},el('span',{class:'agent-mark'},icon('spark')),el('div',{},el('h3',{},'A clear brief is the first step.'),el('p',{},'Mention @ai in the discussion to clarify the request, find relevant files, and outline acceptance criteria.')));
-  const references=(title,items,symbol)=>items?.length&&el('div',{class:'references'},el('h3',{},title),items.map(item=>el('div',{class:'reference'},icon(symbol),el('div',{},link(item.path,sourceURL(workspace.repository,item.path,detail.ticket.headSha||'main'),'code-link'),el('p',{},item.reason)))));
+  const triageJob=(detail.jobs||[]).filter(job=>job.kind==='triage'&&job.status==='succeeded').sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  // Triage reads its captured PR head, or its base revision when no PR exists.
+  // Later implementation commits must not silently change the brief's references.
+  const referenceRevision=[triageJob?.headSha,triageJob?.baseSha].find(sha=>/^[a-f0-9]{40}$/i.test(sha||''));
+  const references=(title,items,symbol)=>items?.length&&el('div',{class:'references'},el('h3',{},title),items.map(item=>el('div',{class:'reference'},icon(symbol),el('div',{},link(item.path,referenceRevision?sourceURL(workspace.repository,item.path,referenceRevision):null,'code-link'),el('p',{},item.reason)))));
   return el('section',{class:'detail-card triage-card'},paneHeading('The implementation brief',el('span',{class:'agent-label'},icon('spark'),'AI triage')),triage.summary&&el('p',{class:'prose'},triage.summary),triage.acceptanceCriteria?.length&&el('div',{class:'acceptance'},el('h3',{},'Acceptance criteria'),el('ul',{},triage.acceptanceCriteria.map(text=>el('li',{},icon('check'),text)))),references('Relevant code',triage.files,'file'),references('Documentation',triage.documentation,'file'),triage.ready&&el('p',{class:'ready-line'},icon('check'),'Scoped and ready for implementation'));
 }
 function propertiesSection(){const t=detail.ticket;const assigned=person(t.assigneeId);return el('section',{class:'detail-card properties-card'},paneHeading('Properties',button('Edit',()=>requireAuth(()=>openTicketForm(t)),'text-button',undefined,{'aria-label':'Edit ticket properties'})),
