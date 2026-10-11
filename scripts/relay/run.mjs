@@ -81,7 +81,7 @@ export async function prepare(api = clients()) {
     await validatePrScope(api, pr);
     value.sourceSha = pr.head.sha;
   } else if (value.job.kind === 'implement') await recoverPublication(api, value);
-  if (value.job.kind === 'implement' && !value.ticket.triage?.ready) throw new Error('Human-approved implementation requires a ready triage.');
+  if (value.job.kind === 'implement' && !value.ticket.triage?.ready && !value.ticket.prNumber) throw new Error('Human-approved implementation requires a ready triage.');
   await mkdir('.agent-output', { recursive: true });
   await saveJson('.agent-output/job.json', value);
   await output('source_sha', value.sourceSha);

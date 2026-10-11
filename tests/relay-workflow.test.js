@@ -228,3 +228,44 @@ test('retries recover an orphan ticket PR/branch but never unrelated or protecte
   status = 'diverged';
   await assert.rejects(recoverPublication(branchApi, fixture()), /unrelated/);
 });
+
+test('feedback on an existing PR can run after human description edits clear triage, with full head and path guards', async () => {
+  const originalDirectory = process.cwd();
+  const directory = await mkdtemp(join(tmpdir(), 'relay-feedback-'));
+  const keys = ['GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_REF', 'JOB_ID', 'TICKET_ID', 'JOB_KIND', 'GITHUB_OUTPUT'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  Object.assign(process.env, { GITHUB_REPOSITORY: 'owner/relay', GITHUB_RUN_ID: '100', GITHUB_REF: 'refs/heads/main', JOB_ID: 'job-1', TICKET_ID: 'RLY-1', JOB_KIND: 'implement', GITHUB_OUTPUT: join(directory, 'outputs') });
+  const value = linked('implement');
+  value.ticket.triage = null;
+  value.ticket.description = 'A human clarified the expected keyboard behavior.';
+  let currentHead = sha, changedPath = 'demo/app.js';
+  const callbacks = [];
+  const api = {
+    platform: async (path, body) => { if (body) { callbacks.push(body); return {}; } return structuredClone(value); },
+    github: async path => {
+      if (path === '') return { default_branch: 'main' };
+      if (path === 'commits/main') return { sha };
+      if (path === 'pulls/42') return { ...prFixture(), head: { ...prFixture().head, sha: currentHead } };
+      if (path.startsWith('pulls/42/files')) return [{ filename: changedPath, status: 'modified' }];
+      if (path.startsWith('git/trees/')) return { truncated: false, tree: [{ path: changedPath, mode: '100644' }] };
+      throw new Error('Unexpected feedback preparation call: ' + path);
+    },
+  };
+  try {
+    process.chdir(directory);
+    await prepare(api);
+    assert.equal(callbacks[0].status, 'running');
+    const prepared = JSON.parse(await readFile('.agent-output/job.json', 'utf8'));
+    assert.equal(prepared.sourceSha, sha);
+    assert.equal(prepared.ticket.description, value.ticket.description);
+    currentHead = nextSha;
+    await assert.rejects(prepare(api), /PR changed/);
+    currentHead = sha; changedPath = '.github/workflows/ci.yml';
+    await assert.rejects(prepare(api), /protected files/);
+    assert.equal(callbacks.length, 1);
+  } finally {
+    process.chdir(originalDirectory);
+    for (const [key, entry] of Object.entries(saved)) entry === undefined ? delete process.env[key] : process.env[key] = entry;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
