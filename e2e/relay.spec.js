@@ -169,7 +169,7 @@ test('explicit GitHub refresh shows new PR revision, checks and review feedback 
       path.endsWith('/pulls/43')?pr:path.endsWith('/pulls')?[pr]:path.endsWith('/issues')?[]:path.endsWith('/actions/runs')?{workflow_runs:[]}:{description:'Live repository'};
     return route.fulfill({json:data});
   });
-  await page.goto('/#github');
+  await page.goto('/showcase.html#github');
   await page.getByRole('button',{name:/Pull requests · 1/}).click();
   await page.getByRole('button',{name:'Guard ticket completion',exact:true}).click();
   const detail=page.getByRole('dialog',{name:'GitHub details'});

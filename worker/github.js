@@ -5,7 +5,7 @@ export class GitHub {
     assert(this.env.GITHUB_TOKEN,'GitHub integration is not configured.',503,'integration_unavailable');
     const response=await this.fetcher('https://api.github.com/repos/'+this.repository+path,{
       method,headers:{Authorization:'Bearer '+this.env.GITHUB_TOKEN,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'Relay-support-platform','Content-Type':'application/json'},
-      body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000),redirect:'error',
+      body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000),redirect:'manual',
     });
     if(!response.ok){const status=response.status===404?404:response.status===403||response.status===429?503:502;throw new HttpError(status,'GitHub could not complete this action (HTTP '+response.status+'). Retry after checking the repository or workflow.','github_error');}
     return response.status===204?null:response.json();
