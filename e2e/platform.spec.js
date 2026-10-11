@@ -1,6 +1,30 @@
 import { test, expect } from '@playwright/test';
 import { installPlatformAPI, reviewDetailFixture, HEAD_SHA } from './helpers/platform-api.js';
 
+for (const linkedPR of [false, true]) test('saved request retry names the agent action accurately '+(linkedPR?'with PR':'before PR'), async ({ page }) => {
+  const api = await installPlatformAPI(page);
+  if (linkedPR) Object.assign(api.detail, reviewDetailFixture());
+  api.detail.ticket.pendingAgent = { id: 'saved-request' };
+  await page.goto('/#ticket/RLY-1');
+  await expect(page.getByText('Your request is saved. Retry it to start the next agent run.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate evidence', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Start implementation', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry saved request', exact: true }).click();
+  expect(api.requests.find(request => request.path.endsWith('/actions')).body.action).toBe(linkedPR?'implement':'triage');
+});
+
+test('saved request during an active run explains the automatic follow-up without offering a retry', async ({ page }) => {
+  const api = await installPlatformAPI(page);
+  Object.assign(api.detail, reviewDetailFixture());
+  api.detail.ticket.pendingAgent = { id: 'saved-request' };
+  api.detail.jobs.unshift({ id:'active-job',kind:'implement',status:'running',createdAt:new Date().toISOString() });
+  await page.goto('/#ticket/RLY-1');
+  await expect(page.getByText('Your request is saved. One follow-up agent will start after the current run finishes.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry saved request', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Generate evidence', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Approve and merge', exact: true })).toBeDisabled();
+});
+
 test('public ticket view exposes properties and discussion while protecting maintainer actions', async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   const errors = [];

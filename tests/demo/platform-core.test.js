@@ -37,6 +37,11 @@ test('merge readiness requires current head, checks, evidence, independent appro
   for(const patch of [{state:'closed'},{checksReady:false},{evidenceReady:false},{canMerge:false},{headSha:'short'}]) assert.equal(mergeReadiness({pullRequest:{...pullRequest,...patch}}).ready,false);
   assert.equal(mergeReadiness({}).ready,false);
 });
+test('saved agent requests block merge with a clear feedback reason', () => {
+  const detail={ticket:{pendingAgent:{id:'request-1'}},pullRequest:{state:'open',headSha:'a'.repeat(40),checksReady:true,evidenceReady:true,canMerge:true}};
+  assert.equal(mergeReadiness(detail).ready,false);
+  assert.match(mergeReadiness(detail).reason,/saved request|feedback/i);
+});
 test('API uses same-origin cookies and CSRF only for mutations without credential storage', async () => {
   const calls=[];const request=createAPI({csrf:()=> 'test-csrf',fetcher:async(path,options)=>{calls.push({path,options});return {ok:true,json:async()=>({ok:true})};}});
   await request('/api/workspace');await request('/api/tickets',{method:'POST',body:{title:'Ticket'}});

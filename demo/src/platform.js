@@ -135,13 +135,17 @@ function workflowSection(){
   const actions=[];
   if(t.status==='human_edit')actions.push(action('Resume agents','resume','button primary','play'));
   else if(!['merged','deployed'].includes(t.status)){
-    if(!t.prNumber)actions.push(action(t.triage?'Run triage again':'Start triage','triage','button','spark'));
-    if(!t.prNumber&&t.triage?.ready)actions.push(action('Start implementation','implement','button primary','pr'));
-    if(t.prNumber)actions.push(action('Generate evidence','evidence','button','play'));
+    if(t.pendingAgent){if(!active)actions.push(action('Retry saved request',t.prNumber?'implement':'triage','button primary','spark'));}
+    else{
+      if(!t.prNumber)actions.push(action(t.triage?'Run triage again':'Start triage','triage','button','spark'));
+      if(!t.prNumber&&t.triage?.ready)actions.push(action('Start implementation','implement','button primary','pr'));
+      if(t.prNumber)actions.push(action('Generate evidence','evidence','button','play'));
+    }
     actions.push(action('Switch to human editing','human-edit','text-button','people'));
   }
   return el('section',{class:'detail-card workflow-card'},paneHeading('Agent workflow',el('span',{class:'tiny-live'},el('span'), 'GitHub Actions')),
     active&&el('p',{class:'agent-running'},el('span',{class:'loading-orbit small'}),'An agent is working. This ticket updates automatically.'),
+    t.pendingAgent&&el('p',{class:'notice'},active?'Your request is saved. One follow-up agent will start after the current run finishes.':'Your request is saved. Retry it to start the next agent run.'),
     t.status==='human_edit'&&el('p',{class:'notice'},'Human editing is active. Comments stay in the conversation; resume agents when you are ready.'),
     el('div',{class:'workflow-actions'},actions),readonly&&actions.length>0&&el('p',{class:'small muted'},'Maintainer sign-in is required to run agents.'),
     jobs.length?el('div',{class:'job-timeline'},jobs.slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(jobLine)):el('p',{class:'small muted'},'No agent runs yet. Each run and its result will appear here.'));
