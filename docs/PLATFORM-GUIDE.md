@@ -40,6 +40,8 @@ Mention **`@ai`** to start triage on a ticket without a PR. The workflow timelin
 
 Triage can fail or identify an unready request. The UI displays the reported result; it does not mark every request ready automatically. Background updates preserve the unsent discussion text and its cursor position.
 
+If dispatch was interrupted before GitHub accepted a queued job, **Resume queued agent** becomes available after its short dispatch lease expires. It resumes the existing job. A run already accepted by GitHub continues to show its queue or execution state.
+
 ## Implement and inspect a change
 
 When triage marks the ticket ready, a maintainer chooses **Start implementation**. The trusted workflow prepares the task, an agent works in isolation, verification runs on another runner, and a publisher attaches the real PR to the ticket.
