@@ -80,10 +80,14 @@ export async function installPlatformAPI(page, options = {}) {
     if (path === '/api/inbox' && method === 'GET') return send({ messages: fixture.messages });
     if (path === '/api/inbox' && method === 'POST') {
       const previous = fixture.messages.find(message => message.idempotencyKey === body.idempotencyKey);
-      if (previous) return send({ message: previous, ticket: fixture.detail.ticket });
+      if (previous) {
+        if (!previous.processingComplete && !fixture.incompleteEmail) { addJob('triage'); previous.processingComplete=true; fixture.detail.ticket.error=null; }
+        return send({ message: previous, ticket: fixture.detail.ticket }, 201);
+      }
       fixture.detail = detailFixture({ ticket: ticketFixture({ title: body.subject, description: body.body, originalDescription: body.body }) });
-      addJob('triage');
-      const message = { id: `email-${fixture.messages.length + 1}`, ...body, ticketId: fixture.detail.ticket.id, createdAt: timestamp };
+      if (!fixture.incompleteEmail) addJob('triage');
+      else fixture.detail.ticket.error='Email saved; GitHub dispatch failed. Retry delivery with the same key.';
+      const message = { id: `email-${fixture.messages.length + 1}`, ...body, ticketId: fixture.detail.ticket.id, processingComplete:!fixture.incompleteEmail, createdAt: timestamp };
       fixture.messages.push(message);
       return send({ message, ticket: fixture.detail.ticket }, 201);
     }
