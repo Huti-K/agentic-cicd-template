@@ -190,6 +190,7 @@ async function comment(store,github,env,id,input) {
     assert(!['merged','deployed'].includes(ticket.status)||kind!=='feedback','A shipped ticket cannot restart implementation.',409);
     if(kind==='feedback')assert(ticket.prNumber,'Feedback requires a linked pull request.',409);
     const changes={contributorIds:[...new Set([...ticket.contributorIds,'huti',...added])]};
+    if((kind==='feedback'||added.includes('ai'))&&(ticket.prNumber||ticket.status==='implementing')&&!ticket.mergePending&&!['merged','deployed'].includes(ticket.status))changes.requestRevision=(ticket.requestRevision||0)+1;
     if((added.includes('ai')||kind==='feedback')&&!ticket.mergePending&&!['human_edit','merged','deployed'].includes(ticket.status))changes.pendingAgent={id:crypto.randomUUID(),requestedAt:now()};
     try{ticket=await store.appendComment(ticket,content,kind,changes);break;}
     catch(error){if(error.code!=='version_conflict'||attempt===2)throw error;}

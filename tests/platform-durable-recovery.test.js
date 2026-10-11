@@ -137,7 +137,8 @@ test('feedback during implementation takes priority over evidence and blocks mer
   const original = started.data.jobs[0];
   assert.equal((await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: 'Please also handle keyboard navigation.', kind: 'feedback' } })).status, 200);
   assert.ok((await store.ticket('RLY-1')).pendingAgent);
-  assert.equal((await api.callback(original.id, { status: 'succeeded', runId: 456, summary: 'First changes published.', pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  assert.equal((await api.callback(original.id, { status: 'succeeded', runId: 456, summary: 'First changes published.', pullRequest: { number: 71, headSha: PR_SHA } })).status, 409);
+  assert.equal((await api.callback(original.id, { status: 'failed', runId: 456, summary: 'New feedback superseded this run.' })).status, 200);
   const jobs = await store.jobs('RLY-1');
   assert.equal(jobs.length, 2);
   assert.equal(jobs[0].kind, 'implement');
@@ -195,7 +196,7 @@ test('failed feedback dispatch preserves the request, blocks merge, and retries 
   const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
   await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: 'Improve keyboard focus.', kind: 'feedback' } });
   api.github.failure = { path: '/dispatches', status: 503 };
-  const payload = { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } };
+  const payload = { status: 'failed', runId: 456, summary: 'New feedback superseded this run.' };
   assert.equal((await api.callback(started.data.jobs[0].id, payload)).status, 200);
   assert.ok((await store.ticket('RLY-1')).pendingAgent);
   assert.match((await store.ticket('RLY-1')).error, /Feedback is saved/);
@@ -307,6 +308,29 @@ test('triage description changes require reimplementation of an existing PR', as
   assert.equal((await store.job(implementing.data.jobs[0].id)).requestRevision, 1);
 });
 
+test('failed feedback implementation keeps the request unfulfilled without an automatic retry loop', async context => {
+  const { api, store, ticket: original } = await review(context);
+  const evidence = await store.createJob(original, 'evidence', BASE_SHA);
+  await store.updateJob(evidence, { status: 'succeeded', headSha: PR_SHA, evidence: [{ kind: 'video' }] });
+  const feedback = await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: 'Please support keyboard navigation.', kind: 'feedback' } });
+  const job = feedback.data.jobs.find(item => item.status === 'queued');
+  assert.equal((await api.callback(job.id, { status: 'failed', runId: 456, summary: 'Implementation failed.' })).status, 200);
+  assert.equal(api.github.dispatches.length, 1, 'failure must not start an unbounded paid retry loop');
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).status, 409);
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai also retain screen reader focus.' } });
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'resume' } });
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).status, 409);
+  assert.equal(api.github.mergeCalls, 0);
+  assert.equal(api.github.dispatches.length, 1);
+  const retried = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal((await api.callback(retried.data.jobs[0].id, { status: 'succeeded', runId: 457, pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  const current = await store.ticket('RLY-1');
+  assert.equal(current.requestRevision, 2);
+  assert.equal(current.implementedRequestRevision, 2);
+  assert.equal(api.github.dispatches.length, 3, 'explicit retry then fresh evidence');
+});
+
 test('concurrent agent requests compete atomically for the final global slot', async context => {
   const { api, store } = await setup(context);
   const tickets = [];
@@ -323,4 +347,12 @@ test('concurrent agent requests compete atomically for the final global slot', a
   const unchanged = await store.ticket(loser.id);
   assert.equal(unchanged.version, loser.version);
   assert.equal(unchanged.activeJobId, null);
+});
+
+test('AI feedback during initial implementation invalidates that snapshot before a PR exists', async context => {
+  const { api, store } = await ticket(context, { status: 'ready', triage: { ready: true } });
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai include keyboard support.' } });
+  assert.equal((await store.ticket('RLY-1')).requestRevision, 1);
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 409);
 });
