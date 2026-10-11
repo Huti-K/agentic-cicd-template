@@ -3,12 +3,22 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "lint": "node scripts/lint.mjs",
-    "test": "node --test",
+    "test": "node --test tests/*.test.js tests/demo/*.test.js",
+    "test:browser": "playwright test",
+    "tools:install": "node scripts/install-tools.mjs",
+    "lint:workflows": ".cache/tools/actionlint -shellcheck=",
+    "scan:secrets": ".cache/tools/gitleaks git --redact=100 --no-banner --log-opts=--all",
     "build": "node scripts/build.mjs",
     "check": "npm run lint && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "yaml": "2.9.1"
   }
 }

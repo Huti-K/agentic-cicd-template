@@ -1,27 +1,48 @@
-# Testing the lab
+# Testing and showcasing the lab
 
-## Starter experiment
+## Useful demonstrations
 
-The initial demo intentionally converts input to a number before lookup. That breaks identifiers with leading zeros and can accept unintended numeric spellings. The baseline tests cover other inventory behavior and intentionally leave this regression for the issue-fixing agent to discover and test. CI being green does not imply exhaustive coverage.
+The current Stockroom app includes the barcode and safe-stock fixes. Scanning **Label roll** succeeds, quantities stay safe integers, and shipping the final unit reaches zero.
 
-Use [sample-bug.md](sample-bug.md) as the first issue. After the agent opens its PR, verify:
+- [PR #7](https://github.com/Huti-K/agentic-cicd-template/pull/7) demonstrates the original leading-zero fix.
+- [PR #11](https://github.com/Huti-K/agentic-cicd-template/pull/11) demonstrates unsafe-stock validation.
+- [PR #12](https://github.com/Huti-K/agentic-cicd-template/pull/12) contains the deliberately incorrect zero-stock boundary. Its old test suite passed and the AI reviewer found the regression. Do not merge it. The upgraded browser suite now covers this boundary too.
 
-1. The new regression test fails against the base version of `demo/src/inventory.js`.
-2. The PR changes only demo code and its tests.
-3. `npm run check` passes on the proposed commit.
-4. **Codex independent review** publishes a report attached to that same commit.
-5. **AI review** is successful, and the PR's **verify** check is successful.
-6. The label roll lookup works on the PR checkout.
-7. After you merge, main CI deploys Pages and the hosted label roll lookup works too.
+There are no intentional inventory bugs in the upgraded application. The report in [sample-bug.md](sample-bug.md) is a historical fixture for the starter revision `e902feb`; it is not a new bug report against the upgraded app.
 
-The initial test PR is intentionally left open for you to inspect and merge. Creating another issue for the same bug after merging is not a fresh test; use a new bug or a separate repository created from a starter revision.
+## Commands
 
-## Local checks
+```sh
+npm ci --ignore-scripts
+npm run check
+npx playwright install chromium
+npm run test:browser
+npm run tools:install
+npm run lint:workflows
+npm run scan:secrets
+```
 
-`npm run check` performs JavaScript syntax checks, Node unit tests (inventory behavior and workflow gates), and the static build. `npm run dev` serves the demo on localhost:4173. No npm install is necessary.
+`check` runs syntax checks, Node tests, and a clean build. Unit tests exercise inventory boundaries, issue validation, regression evidence, review reporting, workflow policy, and deployment verification. Browser tests exercise the built application on desktop and mobile viewports. The GitHub API is stubbed only inside dashboard tests so rate limits don't make CI flaky.
 
-For workflow changes, run [actionlint](https://github.com/rhysd/actionlint). Do not give a green review based only on YAML parsing; verify event conditions, credentials, PR publication, and follow-up workflow runs too.
+CI also runs on Node 22 and 24. Local browser tests serve the built site on port 4174, separate from the development server on 4173. Reports are written to ignored `playwright-report/` and `test-results/` directories.
 
-## Review failures
+## What the regression gate proves
 
-API errors, missing credentials, invalid review JSON, and timeouts are failures, not approval. The review publishes an error status. After correcting the cause, rerun the review workflow for the PR. Actionable findings produce a failing **AI review** status; make the fix and push before re-reviewing.
+The agent must change at least one `tests/demo/*.test.js` file. The verifier copies those tests onto an archive of the original commit and runs them with a trusted Node reporter. At least one assertion must fail, with no other runner/import/syntax errors. Then the candidate's full checks must pass.
+
+A failing test caused by an unexpected exception should use `assert.doesNotThrow` to express the expected behavior. New test imports must resolve on the original revision. The gate rejects a test that already passes, a missing import, and invalid JavaScript; fixtures exercise those cases locally.
+
+The check proves a reported behavioral difference, not exhaustive correctness. A maintainer still reviews whether the assertion matches the issue.
+
+## End-to-end acceptance
+
+For a new, genuine bug:
+
+1. Confirm the issue's report is reproducible before adding `agent-ready`.
+2. Inspect the successful implementation run and its **regression-evidence** artifact.
+3. Verify that only demo files and demo tests changed.
+4. Confirm the exact PR revision has green **verify** and **AI review** statuses.
+5. Inspect browser evidence and reviewer findings, then make the human merge decision.
+6. Follow main CI through **deploy**. Confirm its public manifest matches the merged commit and open the pipeline page.
+
+New workflow definitions take full effect after their upgrade PR is merged. PR CI and review validate the proposed upgrade beforehand; deployment only runs from main.

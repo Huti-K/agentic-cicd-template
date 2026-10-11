@@ -6,3 +6,6 @@ dist/
 .DS_Store
 *.log
 .agent-output/
+.cache/
+playwright-report/
+test-results/
