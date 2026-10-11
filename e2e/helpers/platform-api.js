@@ -135,7 +135,10 @@ export async function installPlatformAPI(page, options = {}) {
         fixture.detail.ticket.status = 'merged';
         fixture.detail.pullRequest.state = 'merged';
         fixture.detail.pullRequest.canMerge = false;
-      } else addJob(body.action);
+      } else {
+        const pending=fixture.detail.jobs.find(job=>job.id===fixture.detail.ticket.activeJobId&&job.status==='queued'&&job.dispatchState==='pending'&&!job.runId);
+        if(pending){pending.dispatchState='accepted';pending.dispatchUntil=0;}else addJob(body.action);
+      }
       return send(fixture.detail);
     }
     return send({ error: `Unmocked API endpoint: ${method} ${path}`, code: 'NOT_FOUND' }, 404);

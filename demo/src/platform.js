@@ -139,12 +139,17 @@ function propertiesSection(){const t=detail.ticket;const assigned=person(t.assig
   el('div',{class:'property-section'},el('h3',{},'Contributors',el('span',{class:'count-pill'},(t.contributorIds||[]).length)),el('div',{class:'contributor-list'},(t.contributorIds||[]).map(id=>{const p=person(id);return el('div',{class:'contributor'},avatar(id,true),el('div',{},el('strong',{},p?.name||id),el('small',{},'@'+(p?.handle||id))));})),!(t.contributorIds||[]).length&&el('p',{class:'muted small'},'Mention someone to bring them into the conversation.'),el('p',{class:'property-hint'},'@mentions automatically add contributors.')),
   el('div',{class:'property-section'},el('h3',{},'Tags'),el('div',{class:'tags'},(t.tags||[]).length?t.tags.map(tag):el('span',{class:'muted small'},'No tags yet'))));
 }
+function pendingDispatch(value){return value?.ticket&&!value.ticket.mergePending&&!['human_edit','merged','deployed'].includes(value.ticket.status)&&(value.jobs||[]).find(job=>job.id===value.ticket.activeJobId&&job.status==='queued'&&job.dispatchState==='pending'&&!job.runId);}
+function resumableDispatch(value){const job=pendingDispatch(value);return job&&(job.dispatchUntil||0)<=Date.now()?job:null;}
+function detailStamp(value){return JSON.stringify([value,resumableDispatch(value)?.id||null]);}
 function workflowSection(){
   const t=detail.ticket,jobs=detail.jobs||[],active=jobs.some(j=>['queued','running'].includes(j.status)),readonly=!session.authenticated;
+  const dispatch=pendingDispatch(detail),resume=resumableDispatch(detail);
   const action=(name,value,style='button',symbol='spark',disabled=false)=>button(name,()=>requireAuth(()=>ticketAction(value)),style,symbol,{disabled:busy||disabled||t.mergePending||(active&&value!=='human-edit')});
   const actions=[];
   if(t.status==='human_edit')actions.push(action('Resume agents','resume','button primary','play'));
   else if(!['merged','deployed'].includes(t.status)){
+    if(resume)actions.push(button('Resume queued agent',()=>requireAuth(()=>ticketAction(resume.kind)),'button primary','refresh',{disabled:busy||t.mergePending}));
     if(t.pendingAgent){if(!active)actions.push(action('Retry saved request',t.prNumber?'implement':'triage','button primary','spark'));}
     else{
       if(!t.prNumber)actions.push(action(t.triage?'Run triage again':'Start triage','triage','button','spark'));
@@ -154,7 +159,8 @@ function workflowSection(){
     actions.push(action('Switch to human editing','human-edit','text-button','people'));
   }
   return el('section',{class:'detail-card workflow-card'},paneHeading('Agent workflow',el('span',{class:'tiny-live'},el('span'), 'GitHub Actions')),
-    active&&el('p',{class:'agent-running'},el('span',{class:'loading-orbit small'}),'An agent is working. This ticket updates automatically.'),
+    active&&el('p',{class:'agent-running'},el('span',{class:'loading-orbit small'}),dispatch?'An agent is queued. This ticket updates automatically.':'An agent is working. This ticket updates automatically.'),
+    dispatch&&el('p',{class:'notice'},resume?'Resume this queued agent to continue the existing job.':'Waiting for GitHub dispatch confirmation. Recovery will be available when this attempt times out.'),
     requestNeedsImplementation(t)&&!['merged','deployed'].includes(t.status)&&el('p',{class:'notice'},'The request changed after this PR was implemented. '+(t.status==='human_edit'?'Resume agents, then mention @ai or post feedback to implement the updated request.':'Mention @ai or post feedback to implement the updated request before generating evidence.')),
     t.pendingAgent&&el('p',{class:'notice'},active?'Your request is saved. One follow-up agent will start after the current run finishes.':'Your request is saved. Retry it to start the next agent run.'),
     t.status==='human_edit'&&el('p',{class:'notice'},'Human editing is active. Comments stay in the conversation; resume agents when you are ready.'),
@@ -204,7 +210,7 @@ function renderTicket(){
 }
 async function mutation(path,body,method='POST'){
   const target=activeTicket,result=await api(path,{method,body});
-  if(result.ticket&&activeTicket===target){detail=result;detailSignature=JSON.stringify(result);renderTicket();}
+  if(result.ticket&&activeTicket===target){detail=result;detailSignature=detailStamp(result);renderTicket();}
   await refreshWorkspace(false).catch(error=>banner('Saved successfully, but the workspace refresh failed: '+error.message));return result;
 }
 async function ticketAction(action,headSha){if(busy)return;busy=true;try{await mutation('/api/tickets/'+encodeURIComponent(activeTicket)+'/actions',{action,...(headSha?{headSha}:{})});toast(action==='approve-merge'?'Merge requested. The platform will track deployment.':action==='human-edit'?'Human editing enabled.':action==='resume'?'Agent workflow resumed.':'Agent run requested. Follow its progress in the workflow timeline.');}catch(error){toast(error.message,true);}finally{busy=false;if(detail)renderTicket();}}
@@ -223,7 +229,7 @@ function openTicketForm(current){
   const contributors=el('fieldset',{class:'contributor-fieldset'},el('legend',{},'Contributors'),people().map(p=>el('label',{class:'contributor-option'},el('input',{type:'checkbox',name:'contributorIds',value:p.id,checked:(current?.contributorIds||[]).includes(p.id)}),avatar(p.id,true),p.name)));
   const errorNode=el('p',{class:'form-error',role:'alert'}),submit=el('button',{type:'submit',class:'button primary'},isEdit?'Save changes':'Create ticket');
   const form=el('form',{onsubmit:async event=>{event.preventDefault();submit.disabled=true;errorNode.textContent='';const payload={title:title.value.trim(),description:description.value.trim(),priority:priority.value,assigneeId:assignee.value,tags:[...new Set(tagsInput.value.split(',').map(s=>s.trim()).filter(Boolean))],contributorIds:[...new FormData(form).getAll('contributorIds')]};if(isEdit)payload.version=current.version;else payload.type=type.value;
-    try{const result=await api(isEdit?'/api/tickets/'+encodeURIComponent(current.id):'/api/tickets',{method:isEdit?'PATCH':'POST',body:payload});$('#modal').close();detail=result;activeTicket=result.ticket.id;detailSignature=JSON.stringify(result);await refreshWorkspace(false).catch(error=>banner('Ticket saved. Workspace refresh failed: '+error.message));navigate('ticket/'+result.ticket.id);toast(isEdit?'Ticket updated.':'Ticket created. Mention @ai to start triage.');}
+    try{const result=await api(isEdit?'/api/tickets/'+encodeURIComponent(current.id):'/api/tickets',{method:isEdit?'PATCH':'POST',body:payload});$('#modal').close();detail=result;activeTicket=result.ticket.id;detailSignature=detailStamp(result);await refreshWorkspace(false).catch(error=>banner('Ticket saved. Workspace refresh failed: '+error.message));navigate('ticket/'+result.ticket.id);toast(isEdit?'Ticket updated.':'Ticket created. Mention @ai to start triage.');}
     catch(error){errorNode.textContent=error.message+(error.status===409?' Your draft is still here. Copy any changes you want to keep, then close and reopen the editor to work from the latest ticket.':'');if(error.status===409)await refreshTicket(false);}finally{submit.disabled=false;}}},
     el('div',{class:'form-fields'},field('Title',formId+'title',title),field('Description',formId+'description',description),el('div',{class:'form-grid'},field('Type',formId+'type',type),field('Priority',formId+'priority',priority),field('Assignee',formId+'assigneeId',assignee),field('Tags (comma separated)',formId+'tags',tagsInput)),contributors),errorNode,
     el('div',{class:'dialog-actions'},button('Cancel',()=>$('#modal').close()),submit));
@@ -256,7 +262,7 @@ function openEmailForm(){
   showModal('Simulate incoming email',el('p',{class:'modal-description'},'Use fictional customer details. This creates a real support ticket and starts a GitHub Actions triage run; it does not send email.'),form);
 }
 async function refreshWorkspace(render=true){const next=await api('/api/workspace'),signature=JSON.stringify(next);workspace=next;if(signature!==workspaceSignature){workspaceSignature=signature;renderShell();if(render&&!activeTicket)renderMain();}return next;}
-async function refreshTicket(showError=true){if(!activeTicket||loadingDetail)return;const id=activeTicket,generation=requestGeneration;try{const next=await api('/api/tickets/'+encodeURIComponent(id));if(id!==activeTicket||generation!==requestGeneration)return;const signature=JSON.stringify(next);if(signature!==detailSignature){detail=next;detailSignature=signature;renderTicket();}banner('');}catch(error){if(showError&&id===activeTicket)banner('Live updates paused: '+error.message+' Showing the last received ticket.');}}
+async function refreshTicket(showError=true){if(!activeTicket||loadingDetail)return;const id=activeTicket,generation=requestGeneration;try{const next=await api('/api/tickets/'+encodeURIComponent(id));if(id!==activeTicket||generation!==requestGeneration)return;const signature=detailStamp(next);if(signature!==detailSignature){detail=next;detailSignature=signature;renderTicket();}banner('');}catch(error){if(showError&&id===activeTicket)banner('Live updates paused: '+error.message+' Showing the last received ticket.');}}
 async function refreshInbox(){const next=await api('/api/inbox');messages=next.messages||[];if(inboxPage)renderInbox();}
 async function loadRoute(){
   route=inboxPage?'inbox':location.hash.slice(1)||'overview';requestGeneration++;ticketListGeneration++;clearTimeout(ticketListTimer);const generation=requestGeneration;
@@ -264,7 +270,7 @@ async function loadRoute(){
   activeTicket=route.startsWith('ticket/')?route.slice(7):null;renderShell();
   if(!workspace)return;
   if(activeTicket){const id=activeTicket;if(detail?.ticket.id===id){renderTicket();refreshTicket();return;}detail=null;detailSignature='';loadingDetail=true;$('#main-content').replaceChildren(el('div',{class:'loading-state'},el('span',{class:'loading-orbit'}),el('h1',{},'Opening '+id)));
-    try{const next=await api('/api/tickets/'+encodeURIComponent(id));if(generation!==requestGeneration)return;detail=next;detailSignature=JSON.stringify(next);renderTicket();banner('');}catch(error){if(generation===requestGeneration){$('#main-content').replaceChildren(empty('This ticket could not be opened',error.message),button('Back to tickets',()=>navigate('tickets'),'button'));banner(error.message);}}finally{if(generation===requestGeneration)loadingDetail=false;}
+    try{const next=await api('/api/tickets/'+encodeURIComponent(id));if(generation!==requestGeneration)return;detail=next;detailSignature=detailStamp(next);renderTicket();banner('');}catch(error){if(generation===requestGeneration){$('#main-content').replaceChildren(empty('This ticket could not be opened',error.message),button('Back to tickets',()=>navigate('tickets'),'button'));banner(error.message);}}finally{if(generation===requestGeneration)loadingDetail=false;}
   }else{loadingDetail=false;renderMain();if(route==='tickets')reloadTicketList();}
 }
 async function poll(){if(polling||document.hidden||!workspace)return;polling=true;try{await refreshWorkspace(false);if(activeTicket)await refreshTicket();else if(inboxPage){if(!$('#modal').open)await refreshInbox();}else if(route!=='tickets'&&!document.activeElement?.closest('input,textarea,select'))renderMain();}catch(error){banner('Live updates paused: '+error.message+' Showing the last successful snapshot.');}finally{polling=false;}}

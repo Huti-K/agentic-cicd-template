@@ -64,6 +64,31 @@ test('saved request during an active run explains the automatic follow-up withou
   await expect(page.getByRole('button', { name: 'Approve and merge', exact: true })).toBeDisabled();
 });
 
+test('an interrupted dispatch becomes resumable after its lease expires without replacing the job or discussion draft', async ({ page }) => {
+  const api=await installPlatformAPI(page),now=Date.now();
+  await page.clock.install({time:new Date(now)});
+  Object.assign(api.detail.ticket,{status:'triaging',activeJobId:'queued-original'});
+  api.detail.jobs=[{id:'queued-original',ticketId:'RLY-1',kind:'triage',status:'queued',runId:null,dispatchState:'pending',dispatchUntil:now+30000,createdAt:new Date(now).toISOString()}];
+  await page.goto('/#ticket/RLY-1');
+  const draft=page.getByLabel('Write a comment',{exact:true});
+  await draft.fill('Keep these reproduction details while reconnecting.');
+  await draft.evaluate(node=>node.setSelectionRange(4,10));
+  await expect(page.getByText('Waiting for GitHub dispatch confirmation. Recovery will be available when this attempt times out.',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Resume queued agent',exact:true})).toHaveCount(0);
+  await page.clock.fastForward(32000);
+  const resume=page.getByRole('button',{name:'Resume queued agent',exact:true});
+  await expect(resume).toBeEnabled();
+  await expect(draft).toBeFocused();
+  expect(await draft.evaluate(node=>[node.selectionStart,node.selectionEnd])).toEqual([4,10]);
+  await resume.click();
+  await expect(resume).toHaveCount(0);
+  await expect(draft).toHaveValue('Keep these reproduction details while reconnecting.');
+  expect(api.detail.jobs).toHaveLength(1);
+  expect(api.detail.jobs[0]).toMatchObject({id:'queued-original',dispatchState:'accepted'});
+  expect(api.requests.filter(request=>request.method==='POST')).toHaveLength(1);
+  expect(api.requests.find(request=>request.method==='POST').body.action).toBe('triage');
+});
+
 test('public ticket view exposes properties and discussion while protecting maintainer actions', async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   const errors = [];
