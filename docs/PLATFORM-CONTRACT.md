@@ -14,7 +14,7 @@ Writes require a `X-CSRF-Token` returned by the session endpoint. No browser Git
 - `POST /api/tickets` `{ title, description, type: 'bug'|'feature'|'task', priority, tags?: string[], assigneeId?: string, contributorIds?: string[] }` → ticket detail.
 - `PATCH /api/tickets/:id` `{ version, title?, description?, priority?, tags?, assigneeId?, contributorIds? }` → ticket detail. Reject stale versions with 409.
 - `POST /api/tickets/:id/comments` `{ body, kind?: 'comment'|'feedback' }` → ticket detail. Recognized @handles add contributors. @ai triggers triage (or implementation when a PR exists). Feedback comments rerun implementation unless human editing is selected.
-- `POST /api/tickets/:id/actions` `{ action: 'triage'|'implement'|'evidence'|'human-edit'|'resume'|'approve-merge', headSha?: string }` → ticket detail. Merge requires current head, completed evidence, green checks and independent review; never unattended.
+- `POST /api/tickets/:id/actions` `{ action: 'triage'|'implement'|'evidence'|'human-edit'|'resume'|'approve-merge'|'retry-issue', headSha?: string, confirmRetry?: boolean }` → ticket detail. Merge requires current head, completed evidence, green checks and independent review; never unattended. `retry-issue` requires explicit `confirmRetry: true`, reconciles an existing GitHub issue before permitting a new creation attempt, and starts no agent.
 - `GET /api/inbox` → `{ messages }`.
 - `POST /api/inbox` `{ senderName, senderEmail, subject, body, idempotencyKey }` → `{ message, ticket }`; creates one ticket and starts triage. Fictional email dashboard, no real email delivery.
 

@@ -75,6 +75,8 @@ An idempotency key protects retries of the same email submission. If the network
 
 The inbox message and its ticket are saved together. An interrupted delivery can resume with the same key after its short processing lease expires. Issue linking uses a durable claim and a stable marker to reconcile an issue GitHub accepted before an interrupted response. A competing request waits or reports that linking is in progress instead of creating another issue.
 
+If GitHub's issue-creation result stays uncertain and no matching issue can be found, automatic retries stop. A maintainer can choose **Retry GitHub connection** on the ticket and confirm another creation attempt. Relay checks for the existing issue again first. This recovery does not start an agent; resume the requested agent action separately. GitHub provides no issue-creation idempotency key, so an uncertain remote operation needs this explicit decision.
+
 ## Local development and configuration
 
 Install dependencies and build first:
