@@ -157,3 +157,28 @@ test('the pipeline page renders run data and handles API outages',async({page})=
   await page.getByRole('button',{name:'Refresh runs'}).click();
   await expect(page.getByRole('status')).toContainText('unavailable');
 });
+
+test('explicit GitHub refresh shows new PR revision, checks and review feedback immediately',async({page})=>{
+  let refreshed=false;
+  await page.route('https://api.github.com/repos/**',route=>{
+    const path=new URL(route.request().url()).pathname;
+    const pr={number:43,title:'Guard ticket completion',state:'open',body:'PR description',user:{login:'huti'},labels:[],updated_at:'2026-10-11T10:00:00Z',head:{sha:(refreshed?'b':'a').repeat(40),ref:'fix/tickets'},base:{ref:'main'}};
+    const data=path.endsWith('/reviews')?[{user:{login:'reviewer'},state:refreshed?'APPROVED':'CHANGES_REQUESTED',body:refreshed?'Updated review after refresh.':'Original cached review.'}]:
+      path.endsWith('/comments')?[]:path.endsWith('/check-runs')?{check_runs:[{name:'verify',status:'completed',conclusion:refreshed?'success':'failure'}],total_count:1}:
+      path.endsWith('/status')?{statuses:[{context:'AI review',state:refreshed?'success':'pending'}],total_count:1}:
+      path.endsWith('/pulls/43')?pr:path.endsWith('/pulls')?[pr]:path.endsWith('/issues')?[]:path.endsWith('/actions/runs')?{workflow_runs:[]}:{description:'Live repository'};
+    return route.fulfill({json:data});
+  });
+  await page.goto('/#github');
+  await page.getByRole('button',{name:/Pull requests · 1/}).click();
+  await page.getByRole('button',{name:'Guard ticket completion',exact:true}).click();
+  const detail=page.getByRole('dialog',{name:'GitHub details'});
+  await expect(detail).toContainText('Original cached review.');
+  await detail.getByRole('button',{name:'Close GitHub pull request #43'}).click();
+  refreshed=true;
+  await Promise.all([page.waitForResponse(response=>new URL(response.url()).pathname.endsWith('/pulls')),page.getByRole('button',{name:'Refresh',exact:true}).click()]);
+  await page.getByRole('button',{name:'Guard ticket completion',exact:true}).click();
+  await expect(detail).toContainText('Updated review after refresh.');
+  await expect(detail).toContainText('Checks on bbbbbbb');
+  await expect(detail).not.toContainText('Original cached review.');
+});

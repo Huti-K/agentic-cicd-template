@@ -49,8 +49,8 @@ test('review failures produce an error, never a passing status', async () => {
   const result = await report(null, { job: 'failure' });
   assert.equal(result.statuses[0].state, 'error');
 });
-test('closed PRs and changed head or base discard the old review', async () => {
-  for (const pr of [{ state: 'closed' }, { head: { sha: 'c'.repeat(40) } }, { base: { sha: 'd'.repeat(40) } }]) {
+test('closed PRs and changed heads discard the old review without affecting another revision', async () => {
+  for (const pr of [{ state: 'closed' }, { head: { sha: 'c'.repeat(40) } }]) {
     const result = await report({ verdict: 'pass', summary: 'Fine.', findings: [] }, { pr });
     assert.equal(result.statuses.length, 0);
     assert.equal(result.reviews.length, 0);
@@ -59,4 +59,17 @@ test('closed PRs and changed head or base discard the old review', async () => {
 test('review text cannot inject HTML or mention a GitHub user', async () => {
   const result = await report({ verdict: 'pass', summary: '<script>alert(1)</script> @everyone', findings: [] });
   assert.doesNotMatch(result.reviews[0].body, /<script>|@everyone/);
+});
+
+test('a changed base completes the pending same-head review with an actionable error', async () => {
+  const result = await report({ verdict: 'pass', summary: 'Fine.', findings: [] }, { pr: { base: { sha: 'd'.repeat(40) } } });
+  assert.equal(result.reviews.length, 0);
+  assert.equal(result.statuses.length, 1);
+  assert.equal(result.statuses[0].sha, head);
+  assert.equal(result.statuses[0].state, 'error');
+  assert.equal(result.statuses[0].context, 'AI review');
+  assert.match(result.statuses[0].description, /base.*rerun/i);
+  assert.equal(result.statuses[0].target_url, 'https://github.com/owner/lab/actions/runs/123');
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /rerun/i);
 });
