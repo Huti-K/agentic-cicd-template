@@ -41,4 +41,3 @@ test('agent fixes without changed tests are rejected', async (t) => {
   execFileSync('git', ['restore', '--staged', 'tests/demo/value.test.js'], { cwd });
   await assert.rejects(verifyRegression({ cwd }), /regression test/);
 });
-

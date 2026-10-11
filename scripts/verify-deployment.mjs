@@ -29,4 +29,3 @@ export async function verifyDeployment({ url, sha, attempts = 12, delay = 10_000
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   await verifyDeployment({ url: process.env.DEPLOYMENT_URL, sha: process.env.EXPECTED_SHA });
 }
-

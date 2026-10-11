@@ -69,4 +69,3 @@ async function loadRuns() {
 refresh.addEventListener('click', loadRuns);
 await loadBuild();
 await loadRuns();
-

@@ -60,4 +60,3 @@ test('review text cannot inject HTML or mention a GitHub user', async () => {
   const result = await report({ verdict: 'pass', summary: '<script>alert(1)</script> @everyone', findings: [] });
   assert.doesNotMatch(result.reviews[0].body, /<script>|@everyone/);
 });
-

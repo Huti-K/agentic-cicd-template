@@ -42,4 +42,3 @@ for (const tool of tools) {
   } finally { await rm(temporary, { recursive: true, force: true }); }
   console.log(`Installed ${tool.name} ${tool.version} (SHA-256 verified)`);
 }
-

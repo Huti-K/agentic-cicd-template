@@ -42,4 +42,3 @@ test('stale deployments and missing assets fail verification', async () => {
       : { ok: false },
   }), /Missing deployed asset/);
 });
-

@@ -15,4 +15,3 @@ export default async function* reporter(events) {
   }
   yield JSON.stringify(result);
 }
-

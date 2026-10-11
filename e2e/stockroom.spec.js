@@ -39,4 +39,3 @@ test('the pipeline page renders actual run data and handles API outages', async 
   await expect(page.getByRole('status')).toContainText('unavailable');
   await expect(page.locator('#runs')).not.toContainText('Verify stock fix');
 });
-

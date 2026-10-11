@@ -51,4 +51,3 @@ test('deployment waits for all checks and reviews are gated to same-repository n
   assert.match(condition, /!github\.event\.pull_request\.draft/);
   assert.match(condition, /dependabot/);
 });
-
