@@ -1,4 +1,5 @@
 export const HEAD_SHA = 'a'.repeat(40);
+import { filterTickets } from '../../demo/src/platform-core.js';
 export const REPOSITORY = 'Huti-K/agentic-cicd-template';
 const timestamp = '2026-10-12T10:00:00.000Z';
 const people = [
@@ -76,7 +77,13 @@ export async function installPlatformAPI(page, options = {}) {
       if (request.headers()['x-csrf-token'] !== fixture.csrfToken) return send({ error: 'CSRF token is required.', code: 'CSRF_INVALID' }, 403);
     }
     if (path === '/api/session' && method === 'DELETE') { fixture.authenticated = false; return send(session()); }
-    if (path === '/api/workspace' && method === 'GET') return send({ repository: REPOSITORY, people, projects: [{ id: 'relay', name: 'Relay', repository: REPOSITORY }], tickets: [fixture.detail.ticket, ...fixture.tickets], jobs: fixture.detail.jobs, integration: { github: true, agents: true }, deployment: fixture.deployment });
+    const tickets=[fixture.detail.ticket,...fixture.tickets].sort((a,b)=>Number(b.id.slice(4))-Number(a.id.slice(4)));
+    if (path === '/api/tickets' && method === 'GET') {
+      const params=new URL(request.url()).searchParams, matching=filterTickets(tickets,Object.fromEntries(params)),after=matching.filter(ticket=>!params.get('cursor')||Number(ticket.id.slice(4))<Number(params.get('cursor'))),limit=Number(params.get('limit')||50),page=after.slice(0,limit);
+      if(params.get('query')&&params.get('query')===fixture.holdTicketQuery)await new Promise(resolve=>{fixture.releaseTicketPage=resolve;});
+      return send({tickets:page,total:matching.length,nextCursor:after.length>limit?page.at(-1).id.slice(4):null});
+    }
+    if (path === '/api/workspace' && method === 'GET') return send({ repository: REPOSITORY, people, projects: [{ id: 'relay', name: 'Relay', repository: REPOSITORY }], tickets:tickets.slice(0,50),ticketCounts:{total:tickets.length,statuses:Object.fromEntries([...new Set(tickets.map(t=>t.status))].map(status=>[status,tickets.filter(t=>t.status===status).length]))},attentionTickets:tickets.filter(t=>['in_review','ready','failed','new'].includes(t.status)).slice(0,5),activeJobCount:fixture.detail.jobs.filter(j=>['queued','running'].includes(j.status)).length,jobs: fixture.detail.jobs, integration: { github: true, agents: true }, deployment: fixture.deployment });
     if (path === '/api/inbox' && method === 'GET') return send({ messages: fixture.messages });
     if (path === '/api/inbox' && method === 'POST') {
       const previous = fixture.messages.find(message => message.idempotencyKey === body.idempotencyKey);

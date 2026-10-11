@@ -1,5 +1,44 @@
 import { test, expect } from '@playwright/test';
-import { installPlatformAPI, reviewDetailFixture, HEAD_SHA } from './helpers/platform-api.js';
+import { installPlatformAPI, reviewDetailFixture, ticketFixture, HEAD_SHA } from './helpers/platform-api.js';
+
+test('all tickets remain discoverable beyond the recent workspace page with accurate counts and retryable paging', async ({ page }) => {
+  const api=await installPlatformAPI(page);
+  api.tickets=Array.from({length:205},(_,index)=>ticketFixture({id:'RLY-'+(index+2),title:index?'Shipped request '+(index+2):'Historic keyboard defect',status:index?'deployed':'in_review',priority:'high'}));
+  await page.goto('/');
+  const stats=page.getByRole('region',{name:'Workspace statistics'});
+  await expect(stats.locator('article').filter({hasText:'Open tickets'}).locator('.stat-number')).toHaveText('2');
+  await expect(stats.locator('article').filter({hasText:'Shipped'}).locator('.stat-number')).toHaveText('204');
+  await expect(page.getByRole('button',{name:'Historic keyboard defect',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'All tickets',exact:true}).click();
+  const list=page.getByRole('region',{name:'Tickets',exact:true});
+  await expect(list).toContainText('Showing 50 of 206 tickets');
+  api.failure={path:'/api/tickets',method:'GET',error:'Ticket page temporarily unavailable.'};
+  await page.getByRole('button',{name:'Load more tickets',exact:true}).click();
+  await expect(list).toContainText('Ticket page temporarily unavailable.');
+  await expect(list.locator('.ticket-line')).toHaveCount(50);
+  api.failure=null;
+  await page.getByRole('button',{name:'Retry ticket page',exact:true}).click();
+  await expect(list).toContainText('Showing 100 of 206 tickets');
+  api.holdTicketQuery='Shipped request';
+  await page.getByLabel('Search tickets',{exact:true}).fill('Shipped request');
+  await expect.poll(()=>typeof api.releaseTicketPage).toBe('function');
+  await page.getByLabel('Search tickets',{exact:true}).fill('Historic keyboard');
+  await expect(list).toContainText('Showing 1 of 1 ticket');
+  const staleResponse=page.waitForResponse(response=>response.url().includes('query=Shipped+request'));
+  api.releaseTicketPage();await staleResponse;
+  await expect(list).toContainText('Showing 1 of 1 ticket');
+  await page.getByLabel('Filter by status',{exact:true}).selectOption('in_review');
+  await page.getByLabel('Filter by priority',{exact:true}).selectOption('high');
+  await expect(list.getByRole('button',{name:'Historic keyboard defect',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Search tickets',{exact:true})).toHaveValue('Historic keyboard');
+  await page.getByRole('button',{name:'Clear',exact:true}).click();
+  await expect(list).toContainText('Showing 50 of 206 tickets');
+  api.tickets.push(ticketFixture({id:'RLY-207',title:'New arrival'}));
+  await page.getByRole('button',{name:'Refresh tickets',exact:true}).click();
+  await expect(list).toContainText('Showing 50 of 207 tickets');
+  await expect(list.getByRole('button',{name:'New arrival',exact:true})).toBeVisible();
+  expect(api.requests.filter(r=>r.path==='/api/tickets'&&r.method==='GET').length).toBeGreaterThan(3);
+});
 
 for (const linkedPR of [false, true]) test('saved request retry names the agent action accurately '+(linkedPR?'with PR':'before PR'), async ({ page }) => {
   const api = await installPlatformAPI(page);
@@ -192,7 +231,9 @@ test('feedback launches revision work, while human editing pauses automatic reru
 
 test('review exposes files and video evidence and confirms an exact PR revision before merging', async ({ page }) => {
   const api = await installPlatformAPI(page, { detail: reviewDetailFixture() });
+  api.detail.pullRequest.freshness={fetchedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30000).toISOString(),cached:true};
   await page.goto('/#ticket/RLY-1');
+  await expect(page.getByText(/GitHub checked.*30 seconds.*rechecked live/)).toBeVisible();
   await page.getByText('1 changed files', { exact: true }).click();
   await expect(page.getByText('demo/src/platform.js', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: /Mobile reply flow video/ })).toHaveAttribute('href', /\/actions\/runs\/456\/artifacts\/789$/);
