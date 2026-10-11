@@ -11,10 +11,13 @@ export function findProduct(products, input) {
 
 export function updateStock(products, barcode, change) {
   if (!Number.isInteger(change)) throw new Error('Quantity must be a whole number.');
+  if (!Number.isSafeInteger(change)) throw new Error('Quantity must be a safe integer.');
   const product = products.find((item) => item.barcode === barcode);
   if (!product) throw new Error('Product not found.');
-  if (product.stock + change < 0) throw new Error('Not enough stock.');
-  return products.map((item) => item.barcode === barcode ? { ...item, stock: item.stock + change } : { ...item });
+  const stock = product.stock + change;
+  if (stock < 0) throw new Error('Not enough stock.');
+  if (!Number.isSafeInteger(stock)) throw new Error('Stock must be a safe integer.');
+  return products.map((item) => item.barcode === barcode ? { ...item, stock } : { ...item });
 }
 
 export function inventorySummary(products) {
