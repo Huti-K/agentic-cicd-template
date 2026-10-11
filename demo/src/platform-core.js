@@ -33,10 +33,14 @@ export function filterTickets(tickets, { query='', status='', priority='' } = {}
   return tickets.filter(t => (!status || t.status === status) && (!priority || t.priority === priority) &&
     (!needle || [t.id,t.title,t.description,...(t.tags || [])].join(' ').toLowerCase().includes(needle)));
 }
+export function requestNeedsImplementation(ticket) {
+  return !!ticket?.prNumber && (ticket.requestRevision || 0) !== (ticket.implementedRequestRevision || 0);
+}
 export function mergeReadiness(detail) {
   const pr = detail?.pullRequest;
   if (!pr) return { ready:false, reason:'An implementation pull request is required.' };
   if (pr.state !== 'open') return { ready:false, reason:'This pull request is no longer open.' };
+  if (requestNeedsImplementation(detail.ticket)) return { ready:false, reason:'The updated request needs a new implementation before evidence and approval.' };
   if (detail.ticket?.pendingAgent) return { ready:false, reason:'The saved request must be handled before this revision can be approved.' };
   if (!pr.checksReady) return { ready:false, reason:'Waiting for passing checks on the current revision.' };
   if (!pr.evidenceReady) return { ready:false, reason:'Run the evidence agent for this revision before merging.' };

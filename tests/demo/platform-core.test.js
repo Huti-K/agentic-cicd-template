@@ -42,6 +42,15 @@ test('saved agent requests block merge with a clear feedback reason', () => {
   assert.equal(mergeReadiness(detail).ready,false);
   assert.match(mergeReadiness(detail).reason,/saved request|feedback/i);
 });
+test('edited request revisions require new implementation even with passing PR evidence', () => {
+  const detail={ticket:{prNumber:32,requestRevision:1},pullRequest:{state:'open',headSha:'a'.repeat(40),checksReady:true,evidenceReady:true,canMerge:true}};
+  assert.equal(mergeReadiness(detail).ready,false);
+  assert.match(mergeReadiness(detail).reason,/updated request.*implementation/i);
+  detail.ticket.implementedRequestRevision=1;
+  assert.equal(mergeReadiness(detail).ready,true);
+  detail.ticket={prNumber:32};
+  assert.equal(mergeReadiness(detail).ready,true);
+});
 test('API uses same-origin cookies and CSRF only for mutations without credential storage', async () => {
   const calls=[];const request=createAPI({csrf:()=> 'test-csrf',fetcher:async(path,options)=>{calls.push({path,options});return {ok:true,json:async()=>({ok:true})};}});
   await request('/api/workspace');await request('/api/tickets',{method:'POST',body:{title:'Ticket'}});

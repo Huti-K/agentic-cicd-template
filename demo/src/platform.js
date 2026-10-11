@@ -1,4 +1,4 @@
-import { STATUS, PRIORITY, safeURL, sourceURL, mentionAt, mentionParts, insertMention, filterTickets, mergeReadiness, createAPI } from './platform-core.js';
+import { STATUS, PRIORITY, safeURL, sourceURL, mentionAt, mentionParts, insertMention, filterTickets, requestNeedsImplementation, mergeReadiness, createAPI } from './platform-core.js';
 
 const $ = selector => document.querySelector(selector);
 const inboxPage = document.body.dataset.page === 'inbox';
@@ -139,12 +139,13 @@ function workflowSection(){
     else{
       if(!t.prNumber)actions.push(action(t.triage?'Run triage again':'Start triage','triage','button','spark'));
       if(!t.prNumber&&t.triage?.ready)actions.push(action('Start implementation','implement','button primary','pr'));
-      if(t.prNumber)actions.push(action('Generate evidence','evidence','button','play'));
+      if(t.prNumber&&!requestNeedsImplementation(t))actions.push(action('Generate evidence','evidence','button','play'));
     }
     actions.push(action('Switch to human editing','human-edit','text-button','people'));
   }
   return el('section',{class:'detail-card workflow-card'},paneHeading('Agent workflow',el('span',{class:'tiny-live'},el('span'), 'GitHub Actions')),
     active&&el('p',{class:'agent-running'},el('span',{class:'loading-orbit small'}),'An agent is working. This ticket updates automatically.'),
+    requestNeedsImplementation(t)&&!['merged','deployed'].includes(t.status)&&el('p',{class:'notice'},'The request changed after this PR was implemented. '+(t.status==='human_edit'?'Resume agents, then mention @ai or post feedback to implement the updated request.':'Mention @ai or post feedback to implement the updated request before generating evidence.')),
     t.pendingAgent&&el('p',{class:'notice'},active?'Your request is saved. One follow-up agent will start after the current run finishes.':'Your request is saved. Retry it to start the next agent run.'),
     t.status==='human_edit'&&el('p',{class:'notice'},'Human editing is active. Comments stay in the conversation; resume agents when you are ready.'),
     el('div',{class:'workflow-actions'},actions),readonly&&actions.length>0&&el('p',{class:'small muted'},'Maintainer sign-in is required to run agents.'),
