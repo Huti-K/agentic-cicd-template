@@ -27,7 +27,7 @@ Relay combines a browser interface, a Cloudflare Worker with D1 storage, and Git
 2. **Mention a teammate** with `@` in the discussion. Recognized mentions add that person as a ticket contributor; they do not grant repository permissions.
 3. **Mention `@ai`** to start a GitHub Actions triage run. The agent refines the description, identifies relevant files and documentation, and writes acceptance criteria.
 4. **Start implementation** when the brief is ready. A separate agent proposes a change and attaches a real pull request to the ticket.
-5. **Generate evidence** for the current PR revision. A separate agent writes end-to-end tests; another runner executes them. Open the resulting GitHub artifacts to inspect reports and available recordings.
+5. **Inspect automatic evidence** for the current PR revision. A separate agent writes end-to-end tests; another runner executes them. Open the resulting GitHub artifacts to inspect reports and recordings. Use **Generate evidence** to retry a failed evidence run.
 6. **Review the result.** Leave a **Feedback** comment to request another implementation pass. Use **Switch to human editing** to pause agent work and make manual changes, then **Resume agents** when ready.
 7. **Approve and merge** a specific revision once its checks, independent review, and evidence are ready. The server checks these conditions again immediately before merging.
 8. **Follow deployment.** Successful main-branch CI deploys the platform to Cloudflare and verifies the deployed commit. A ticket becomes deployed only when its merged change is included in that deployment.
