@@ -11,7 +11,7 @@ export const PASSWORD = 'fixture password';
 
 export function githubFixture() {
   const fixture = {
-    calls: [], issueNumber: 99, failure: null,
+    calls: [], issues: [], issueNumber: 99, failure: null,
     pull: { number: 71, title: 'Keep support drafts', state: 'open', draft: false, merged: false, mergeable: true, mergeable_state: 'clean', html_url: `https://github.com/${REPO}/pull/71`, head: { sha: PR_SHA, ref: 'relay/ticket-RLY-1', repo: { full_name: REPO } }, base: { sha: BASE_SHA, ref: 'main', repo: { full_name: REPO } }, user: { login: 'relay-agent' }, merge_commit_sha: MERGE_SHA },
     checks: [{ id: 10, name: 'verify', status: 'completed', conclusion: 'success', head_sha: PR_SHA }, { id: 11, name: 'AI review', status: 'completed', conclusion: 'success', head_sha: PR_SHA }],
     reviews: [{ id: 1, state: 'APPROVED', commit_id: PR_SHA, user: { login: 'independent-reviewer' }, submitted_at: '2026-10-12T10:00:00Z' }],
@@ -28,8 +28,10 @@ export function githubFixture() {
     const path = url.pathname.replace(`/repos/${REPO}`, '');
     if (path === '/issues' && method === 'POST') {
       const number = ++fixture.issueNumber;
-      return response({ number, html_url: `https://github.com/${REPO}/issues/${number}`, ...body }, 201);
+      const issue = { number, html_url: `https://github.com/${REPO}/issues/${number}`, ...body };
+      fixture.issues.push(issue);return response(issue, 201);
     }
+    if (path === '/issues' && method === 'GET') { const page = Number(url.searchParams.get('page') || 1);return response(fixture.issues.slice((page-1)*100,page*100)); }
     if (/^\/issues\/\d+$/.test(path)) return response({ number: Number(path.split('/').at(-1)), ...body });
     if (/^\/issues\/\d+\/comments$/.test(path)) return response({ id: 22, ...body }, 201);
     if (path.includes('/dispatches')) {
@@ -66,7 +68,7 @@ export async function platformHarness(context) {
   const migration = await readFile(new URL('../../migrations/0001_platform.sql', import.meta.url), 'utf8');
   for (const statement of migration.split(';').map(value => value.trim()).filter(Boolean)) await DB.prepare(statement).run();
   const github = githubFixture();
-  const env = { DB, GITHUB_TOKEN: 'fixture-github-token', GITHUB_REPOSITORY: REPO, RELAY_CALLBACK_SECRET: 'fixture-callback-secret', MAINTAINER_PASSWORD_HASH: createHash('sha256').update(PASSWORD).digest('hex'), SESSION_SECRET: 'fixture-session-secret-which-is-long-enough', DEPLOYMENT_URL: PLATFORM_ORIGIN, AGENT_REF: 'main' };
+  const env = { DB, GITHUB_PUBLIC_CACHE_SECONDS: '0', GITHUB_TOKEN: 'fixture-github-token', GITHUB_REPOSITORY: REPO, RELAY_CALLBACK_SECRET: 'fixture-callback-secret', MAINTAINER_PASSWORD_HASH: createHash('sha256').update(PASSWORD).digest('hex'), SESSION_SECRET: 'fixture-session-secret-which-is-long-enough', DEPLOYMENT_URL: PLATFORM_ORIGIN, AGENT_REF: 'main' };
   const app = createApp({ fetcher: github.fetcher });
   const pending = [];
   let cookie = '', csrfToken = '';

@@ -59,11 +59,14 @@ test('merge recovery catches up a completed deployment only after verified commi
   await store.setMetadata('deployment',{sha:BASE_SHA,url:'https://relay.test'});
   api.github.compareStatus='diverged';
   const excluded=await api.request('/api/tickets/RLY-1');assert.equal(excluded.data.ticket.status,'merged');
+  const comparisons=api.github.calls.filter(call=>call.path.includes('/compare/')).length;
+  await api.request('/api/tickets/RLY-1');assert.equal(api.github.calls.filter(call=>call.path.includes('/compare/')).length,comparisons,'immutable ancestry is cached for this deployment');
   await store.update(await store.ticket('RLY-1'),{status:'in_review',mergePending:false,mergeCommitSha:null});
+  const nextDeployment='d'.repeat(40);await store.setMetadata('deployment',{sha:nextDeployment,url:'https://relay.test'});
   api.github.compareStatus='ahead';
   const included=await api.request('/api/tickets/RLY-1');assert.equal(included.data.ticket.status,'deployed');
-  assert.equal(included.data.ticket.deployedSha,BASE_SHA);
-  assert.ok(api.github.calls.some(call=>call.path.endsWith('/compare/'+MERGE_SHA+'...'+BASE_SHA)));
+  assert.equal(included.data.ticket.deployedSha,nextDeployment);
+  assert.ok(api.github.calls.some(call=>call.path.endsWith('/compare/'+MERGE_SHA+'...'+nextDeployment)));
   assert.equal(api.github.mergeCalls,0);
 });
 

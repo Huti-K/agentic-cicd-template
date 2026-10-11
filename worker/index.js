@@ -36,13 +36,33 @@ function cookieHeader(token,request,maxAge=43_200) {
 }
 async function ensureIssue(store,github,ticket) {
   if(ticket.issueNumber)return ticket;
-  const issue=await github.createIssue(ticket);assert(Number.isSafeInteger(issue.number)&&issue.number>0,'GitHub returned an invalid issue.',502);
-  return store.update(ticket,{issueNumber:issue.number,issueUrl:repositoryURL(github.repository)+'/issues/'+issue.number,error:null});
+  assert(github.env.GITHUB_TOKEN,'GitHub integration is not configured.',503,'integration_unavailable');
+  const claim=await store.claimIssue(ticket.id);
+  try{
+    ticket=await store.ticket(ticket.id);
+    if(ticket.issueNumber){await store.releaseIssue(claim);return ticket;}
+    let issue;
+    if(claim.attempted){
+      issue=await github.findIssue(ticket,claim.marker);
+      assert(issue,'The previous GitHub issue creation is uncertain. Retry reconciliation shortly; no duplicate issue was created.',409,'issue_uncertain');
+    }else{
+      await store.issueAttempt(claim,true);
+      issue=await github.createIssue(ticket,claim.marker);
+    }
+    assert(Number.isSafeInteger(issue.number)&&issue.number>0,'GitHub returned an invalid issue.',502);
+    const linked=await store.attachIssue(ticket.id,issue.number,repositoryURL(github.repository)+'/issues/'+issue.number);
+    await store.releaseIssue(claim);return linked;
+  }catch(error){
+    // A timed-out POST may still have committed remotely. Keep its lease and
+    // marker; later attempts reconcile history instead of issuing another POST.
+    if(!claim.attempted&&error.upstreamStatus>=400&&error.upstreamStatus<500){await store.issueAttempt(claim,false);await store.releaseIssue(claim);}
+    throw error;
+  }
 }
 async function createTicket(store,github,input) {
   const properties=ticketInput(input);
   let ticket=await store.create(newTicket(properties));
-  try{ticket=await ensureIssue(store,github,ticket);}catch(error){ticket=await store.update(ticket,{error:error.message});}
+  try{ticket=await ensureIssue(store,github,ticket);}catch(error){ticket=await store.update(await store.ticket(ticket.id),{error:error.message});}
   await store.comment(ticket.id,'Ticket created. Mention @ai to start triage.','huti','event');
   return ticket;
 }
@@ -101,12 +121,12 @@ async function drainPending(store,github,env,id){
   }
   return false;
 }
-async function detail(store,github,id,{withPR=true}={}) {
+async function detail(store,github,id,{withPR=true,cache=false}={}) {
   let [ticket,comments,jobs]=await Promise.all([store.ticket(id),store.comments(id),store.jobs(id)]);
   let pullRequest=null;
   let integrationError=null;
   if(withPR&&ticket.prNumber){
-    try{pullRequest=await github.pull(ticket.prNumber,jobs,ticket.requestRevision||0);}catch(error){integrationError=error.message;}
+    try{pullRequest=await github.pull(ticket.prNumber,jobs,ticket.requestRevision||0,{cache:cache&&!ticket.mergePending});}catch(error){integrationError=error.message;}
   }
   // GitHub may have accepted a merge before the response or local write failed.
   // Recover only the ticket's exact linked revision; never issue another merge.
@@ -132,7 +152,9 @@ async function detail(store,github,id,{withPR=true}={}) {
       const deployed=await store.metadata('deployment');
       if(SHA.test(deployed?.sha)){
         try{
-          const comparison=await github.call('/compare/'+ticket.mergeCommitSha+'...'+deployed.sha);
+          const key='deployment-check:'+ticket.id,previous=await store.metadata(key);
+          const comparison=previous?.mergeSha===ticket.mergeCommitSha&&previous?.deployedSha===deployed.sha?previous:await github.call('/compare/'+ticket.mergeCommitSha+'...'+deployed.sha);
+          if(comparison!==previous)await store.setMetadata(key,{mergeSha:ticket.mergeCommitSha,deployedSha:deployed.sha,status:comparison.status});
           if(['ahead','identical'].includes(comparison.status))ticket=await store.update(ticket,{status:'deployed',deployedSha:deployed.sha,error:null});
         }catch(error){
           if(error.code==='version_conflict')ticket=await store.ticket(id);
@@ -300,7 +322,7 @@ async function deploymentCallback(store,github,env,input) {
   assert(typeof input.url==='string'&&input.url.replace(/\/$/,'')===(env.DEPLOYMENT_URL||'').replace(/\/$/,''),'Unexpected deployment URL.');
   const info={url:input.url,sha:input.sha,runId:String(input.runId||''),deployedAt:now()};
   await store.setMetadata('deployment',info);
-  for(const ticket of (await store.listTickets()).filter(ticket=>ticket.status==='merged'&&SHA.test(ticket.mergeCommitSha))){
+  for(const ticket of (await store.mergedTickets()).filter(ticket=>SHA.test(ticket.mergeCommitSha))){
     const comparison=await github.call('/compare/'+ticket.mergeCommitSha+'...'+input.sha);
     if(['ahead','identical'].includes(comparison.status)){
       await store.update(ticket,{status:'deployed',deployedSha:input.sha,error:null});
@@ -349,10 +371,11 @@ export function createApp({fetcher=globalThis.fetch}={}) {
         }
         if(request.method==='DELETE'){const current=await writeSession(request,env);await store.db.prepare('DELETE FROM sessions WHERE id_hash=?').bind(current.idHash).run();return json(sessionBody(null),200,{'Set-Cookie':cookieHeader('',request,0)});}
       }
-      if(request.method==='GET'&&path==='/api/workspace')return json({repository:github.repository,people:PEOPLE,projects:PROJECTS,tickets:await store.listTickets(),jobs:(await store.jobs()).map(publicJob),integration:{github:!!env.GITHUB_TOKEN,agents:!!env.GITHUB_TOKEN&&!!env.RELAY_CALLBACK_SECRET},deployment:await store.metadata('deployment')||{url:env.DEPLOYMENT_URL||url.origin,sha:null}});
+      if(request.method==='GET'&&path==='/api/workspace')return json({repository:github.repository,people:PEOPLE,projects:PROJECTS,tickets:(await store.ticketPage()).tickets,...await store.workspaceCounts(),jobs:(await store.jobs()).map(publicJob),integration:{github:!!env.GITHUB_TOKEN,agents:!!env.GITHUB_TOKEN&&!!env.RELAY_CALLBACK_SECRET},deployment:await store.metadata('deployment')||{url:env.DEPLOYMENT_URL||url.origin,sha:null}});
+      if(request.method==='GET'&&path==='/api/tickets')return json(await store.ticketPage(url.searchParams));
       if(request.method==='GET'&&path==='/api/inbox')return json({messages:await store.inbox()});
       const ticketMatch=path.match(/^\/api\/tickets\/(RLY-[1-9][0-9]{0,7})(?:\/(comments|actions))?$/);
-      if(request.method==='GET'&&ticketMatch&&!ticketMatch[2])return json(await detail(store,github,ticketMatch[1]));
+      if(request.method==='GET'&&ticketMatch&&!ticketMatch[2])return json(await detail(store,github,ticketMatch[1],{cache:true}));
       if(['POST','PATCH','DELETE'].includes(request.method))await writeSession(request,env);
       else throw new HttpError(404,'Endpoint not found.');
       if(request.method==='POST'&&path==='/api/tickets'){const ticket=await createTicket(store,github,await body(request));return json(await detail(store,github,ticket.id),201);}

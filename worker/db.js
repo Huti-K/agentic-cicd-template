@@ -1,8 +1,34 @@
-import { HttpError, ticketNumber } from './model.js';
+import { HttpError, ticketNumber, assert, STATUSES, PRIORITIES, SHA } from './model.js';
 export const now = () => new Date().toISOString();
 export class Store {
   constructor(db){this.db=db;}
   async listTickets(){const {results}=await this.db.prepare('SELECT * FROM tickets ORDER BY number DESC LIMIT 200').all();return results.map(row=>this.ticketRow(row));}
+  async ticketPage(params=new URLSearchParams()){
+    const limit=Number(params.get('limit')||50),cursor=params.get('cursor'),query=(params.get('query')||'').trim().toLowerCase(),status=params.get('status')||'',priority=params.get('priority')||'';
+    assert(Number.isInteger(limit)&&limit>=1&&limit<=100&&(!cursor||/^[1-9][0-9]{0,7}$/.test(cursor))&&query.length<=200,'Invalid ticket page.');
+    assert((!status||STATUSES.includes(status))&&(!priority||PRIORITIES.includes(priority)),'Invalid ticket filter.');
+    const where=[],values=[];
+    if(status){where.push("json_extract(data,'$.status')=?");values.push(status);}
+    if(priority){where.push("json_extract(data,'$.priority')=?");values.push(priority);}
+    if(query){where.push("instr(lower('RLY-'||number||' '||json_extract(data,'$.title')||' '||json_extract(data,'$.description')||' '||json_extract(data,'$.tags')),?)>0");values.push(query);}
+    const clause=where.length?' WHERE '+where.join(' AND '):'';
+    const count=await this.db.prepare('SELECT COUNT(*) AS total FROM tickets'+clause).bind(...values).first();
+    if(cursor){where.push('number<?');values.push(Number(cursor));}
+    const {results}=await this.db.prepare('SELECT * FROM tickets'+(where.length?' WHERE '+where.join(' AND '):'')+' ORDER BY number DESC LIMIT ?').bind(...values,limit+1).all();
+    const more=results.length>limit,rows=results.slice(0,limit);
+    return {tickets:rows.map(row=>this.ticketRow(row)),total:count.total,nextCursor:more?String(rows.at(-1).number):null};
+  }
+  async workspaceCounts(){
+    const [{results},active,{results:attention}]=await Promise.all([
+      this.db.prepare("SELECT json_extract(data,'$.status') AS status,json_extract(data,'$.priority') AS priority,COUNT(*) AS count FROM tickets GROUP BY status,priority").all(),
+      this.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')").first(),
+      this.db.prepare("SELECT * FROM tickets WHERE json_extract(data,'$.status') IN ('in_review','ready','failed','new') ORDER BY number DESC LIMIT 5").all(),
+    ]);
+    const ticketCounts={total:0,statuses:Object.fromEntries(STATUSES.map(key=>[key,0])),priorities:Object.fromEntries(PRIORITIES.map(key=>[key,0]))};
+    for(const row of results){ticketCounts.total+=row.count;ticketCounts.statuses[row.status]=(ticketCounts.statuses[row.status]||0)+row.count;ticketCounts.priorities[row.priority]=(ticketCounts.priorities[row.priority]||0)+row.count;}
+    return {ticketCounts,activeJobCount:active.count,attentionTickets:attention.map(row=>this.ticketRow(row))};
+  }
+  async mergedTickets(){const {results}=await this.db.prepare("SELECT * FROM tickets WHERE json_extract(data,'$.status')='merged' ORDER BY number").all();return results.map(row=>this.ticketRow(row));}
   ticketRow(row){return row?{...JSON.parse(row.data),id:'RLY-'+row.number,version:row.version,createdAt:row.created_at,updatedAt:row.updated_at}:null;}
   async ticket(id){const row=await this.db.prepare('SELECT * FROM tickets WHERE number=?').bind(ticketNumber(id)).first();if(!row)throw new HttpError(404,'Ticket not found.');return this.ticketRow(row);}
   async create(data){const at=now();const row=await this.db.prepare('INSERT INTO tickets(data,created_at,updated_at) VALUES(?,?,?) RETURNING *').bind(JSON.stringify(data),at,at).first();return this.ticketRow(row);}
@@ -37,13 +63,16 @@ export class Store {
     return this.job(id);
   }
   async startJob(ticket,kind,baseSha){
+    assert(!ticket.mergePending&&!['human_edit','merged','deployed'].includes(ticket.status),'The workflow changed while the issue was being linked. Refresh before starting an agent.',409,'workflow_changed');
+    if(kind==='implement')assert(ticket.triage?.ready||ticket.prNumber,'The request needs triage before implementation.',409,'not_ready');
+    if(kind==='evidence')assert(ticket.prNumber&&SHA.test(ticket.headSha)&&!ticket.pendingAgent&&(ticket.requestRevision||0)===(ticket.implementedRequestRevision||0),'The request needs implementation before evidence.',409,'request_changed');
     const id=crypto.randomUUID(),at=now();
     const job={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,requestRevision:ticket.requestRevision||0,evidence:[],consumedPending:ticket.pendingAgent||null,dispatchState:'pending',dispatchUntil:0};
     const data={...ticket,status:kind==='triage'?'triaging':kind==='implement'?'implementing':'in_review',activeJobId:id,pendingAgent:null,error:null,contributorIds:[...new Set([...ticket.contributorIds,'ai'])]};
     for(const key of ['version','id','createdAt','updatedAt'])delete data[key];
     let results;
     try{results=await this.db.batch([
-      this.db.prepare('UPDATE tickets SET data=?,version=version+1,updated_at=? WHERE number=? AND version=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE ticket_id=? AND status IN (\'queued\',\'running\')) AND (SELECT COUNT(*) FROM jobs WHERE status IN (\'queued\',\'running\'))<3 RETURNING *')
+      this.db.prepare('UPDATE tickets SET data=?,version=version+1,updated_at=? WHERE number=? AND version=? AND json_extract(data,\'$.status\') NOT IN (\'human_edit\',\'merged\',\'deployed\') AND COALESCE(json_extract(data,\'$.mergePending\'),0)=0 AND NOT EXISTS(SELECT 1 FROM jobs WHERE ticket_id=? AND status IN (\'queued\',\'running\')) AND (SELECT COUNT(*) FROM jobs WHERE status IN (\'queued\',\'running\'))<3 RETURNING *')
         .bind(JSON.stringify(data),at,ticketNumber(ticket.id),ticket.version,ticket.id),
       this.db.prepare('INSERT INTO jobs(id,ticket_id,kind,status,data,created_at,updated_at) SELECT ?,?,?,\'queued\',?,?,? WHERE EXISTS(SELECT 1 FROM tickets WHERE number=? AND json_extract(data,\'$.activeJobId\')=?) RETURNING *')
         .bind(id,ticket.id,kind,JSON.stringify(job),at,at,ticketNumber(ticket.id),id),
@@ -135,6 +164,20 @@ export class Store {
     const row=await this.db.prepare('UPDATE inbox SET data=json_set(data,\'$.processingUntil\',0,\'$.processingComplete\',json(?)) WHERE id=? AND json_extract(data,\'$.processingOwner\')=? RETURNING data')
       .bind(JSON.stringify(complete),message.id,message.processingOwner).first();
     return row?JSON.parse(row.data):message;
+  }
+  async claimIssue(id){
+    const key='issue-link:'+id,owner=crypto.randomUUID(),timestamp=Date.now(),initial={marker:crypto.randomUUID(),owner,until:timestamp+60_000,attempted:false};
+    const row=await this.db.prepare("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=json_set(metadata.value,'$.owner',?,'$.until',?) WHERE COALESCE(json_extract(metadata.value,'$.until'),0)<? RETURNING value")
+      .bind(key,JSON.stringify(initial),owner,timestamp+60_000,timestamp).first();
+    if(!row)throw new HttpError(409,'The GitHub issue is being linked. Retry shortly.','issue_linking');
+    return {...JSON.parse(row.value),key};
+  }
+  async issueAttempt(claim,attempted){await this.db.prepare("UPDATE metadata SET value=json_set(value,'$.attempted',json(?)) WHERE key=? AND json_extract(value,'$.owner')=?").bind(JSON.stringify(attempted),claim.key,claim.owner).run();}
+  async releaseIssue(claim){await this.db.prepare("UPDATE metadata SET value=json_set(value,'$.until',0) WHERE key=? AND json_extract(value,'$.owner')=?").bind(claim.key,claim.owner).run();}
+  async attachIssue(id,number,url){
+    await this.db.prepare("UPDATE tickets SET data=json_set(data,'$.issueNumber',?,'$.issueUrl',?,'$.error',NULL),version=version+1,updated_at=? WHERE number=? AND json_extract(data,'$.issueNumber') IS NULL")
+      .bind(number,url,now(),ticketNumber(id)).run();
+    const ticket=await this.ticket(id);assert(ticket.issueNumber===number,'The ticket was linked to a different issue.',409);return ticket;
   }
   async metadata(key){const row=await this.db.prepare('SELECT value FROM metadata WHERE key=?').bind(key).first();return row?JSON.parse(row.value):null;}
   async setMetadata(key,value){await this.db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key,JSON.stringify(value)).run();}
