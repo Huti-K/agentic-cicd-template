@@ -294,6 +294,19 @@ test('editing and reverting a request still rejects an older implementation call
   assert.equal((await store.job(started.data.jobs[0].id)).status, 'queued');
 });
 
+test('triage description changes require reimplementation of an existing PR', async context => {
+  const { api, store } = await review(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, triage })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).requestRevision, 1);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).status, 409);
+  const repeated = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  assert.equal((await api.callback(repeated.data.jobs[0].id, { status: 'succeeded', runId: 457, triage })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).requestRevision, 1, 'unchanged triage text keeps the revision');
+  const implementing = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal((await store.job(implementing.data.jobs[0].id)).requestRevision, 1);
+});
+
 test('concurrent agent requests compete atomically for the final global slot', async context => {
   const { api, store } = await setup(context);
   const tickets = [];

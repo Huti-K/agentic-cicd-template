@@ -277,7 +277,7 @@ async function automationCallback(store,github,env,jobId,input) {
     ticketChanges={status:job.kind==='evidence'?'in_review':'failed',activeJobId:null,error:summary};
     event={body:summary,kind:'agent'};
   }else if(triage){
-    ticketChanges={description:triage.description,triage,status:triage.ready?'ready':latest.pendingAgent?'new':'human_edit',activeJobId:null,error:null};
+    ticketChanges={description:triage.description,requestRevision:(latest.requestRevision||0)+(triage.description!==latest.description?1:0),triage,status:triage.ready?'ready':latest.pendingAgent?'new':'human_edit',activeJobId:null,error:null};
     event={body:triage.summary,kind:'triage'};
   }else if(pullRequest){
     ticketChanges={prNumber:pullRequest.number,prUrl:repositoryURL(github.repository)+'/pull/'+pullRequest.number,headSha:pullRequest.headSha,implementedRequestRevision:job.requestRevision||0,status:'in_review',activeJobId:null,error:null};
