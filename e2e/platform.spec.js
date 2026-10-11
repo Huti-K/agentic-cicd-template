@@ -321,6 +321,24 @@ test('failed comment posts retain the draft and failed refresh keeps the ticket 
   await expect(composer).toHaveValue('This reply should survive a connection failure.');
 });
 
+test('feedback rejected during a pending merge preserves its draft and selected type without claiming success', async ({ page }) => {
+  const api=await installPlatformAPI(page,{detail:reviewDetailFixture()});
+  api.detail.ticket.mergePending=true;api.detail.pullRequest.canMerge=false;
+  api.failure={path:'/api/tickets/RLY-1/comments',method:'POST',status:409,code:'merge_pending',error:'A merge is in progress. Wait before requesting agent work.'};
+  await page.goto('/#ticket/RLY-1');
+  const composer=page.getByLabel('Write a comment',{exact:true}),kind=page.getByLabel('Comment type',{exact:true});
+  await composer.fill('Please also preserve the attachment after refresh.');
+  await kind.selectOption('feedback');
+  await page.getByRole('button',{name:'Post comment',exact:true}).click();
+  await expect(page.locator('#comment-composer').getByRole('alert')).toContainText('A merge is in progress.');
+  await expect(composer).toHaveValue('Please also preserve the attachment after refresh.');
+  await expect(kind).toHaveValue('feedback');
+  await expect(page.getByText('Comment posted.',{exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Post comment',exact:true})).toBeEnabled();
+  expect(api.requests.find(request=>request.method==='POST').body.kind).toBe('feedback');
+  expect(api.detail.comments).toHaveLength(1);expect(api.detail.jobs).toHaveLength(1);
+});
+
 test('a simulated support email creates a ticket and starts triage with an idempotency key', async ({ page }) => {
   const api = await installPlatformAPI(page);
   await page.goto('/inbox.html');
