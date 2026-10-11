@@ -108,17 +108,38 @@ jobs:
             const head = process.env.REVIEWED_HEAD;
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
             if (pr.head.sha !== head) { core.notice('PR changed; discarding stale review.'); return; }
+            const safeText = (value) => String(value).replace(/\s+/g, ' ').trim()
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/([\\`*_{}\[\]()#+.!|~>-])/g, '\\$1');
+            const safeCode = (value) => String(value).replace(/\s+/g, ' ').trim()
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             let state = 'error';
             let body = 'Codex review did not complete. Check the workflow logs and rerun after resolving the failure.';
             if (process.env.REVIEW_JOB === 'success') {
               try {
                 const result = JSON.parse(process.env.RESULT);
-                if (!['pass', 'needs_changes'].includes(result.verdict) || typeof result.summary !== 'string' || !Array.isArray(result.findings)) throw new Error('Invalid review format');
-                state = result.verdict === 'pass' && result.findings.length === 0 ? 'success' : 'failure';
-                body = result.summary + '\n\n' + result.findings.map(f => `- **${f.severity}** — ${f.path}:${f.line}: ${f.description}`).join('\n');
+                if (!['pass', 'needs_changes'].includes(result.verdict) || typeof result.summary !== 'string' || !Array.isArray(result.findings) || result.findings.some((f) => !f || !['P1', 'P2'].includes(f.severity) || typeof f.path !== 'string' || !f.path.trim() || !Number.isSafeInteger(f.line) || f.line < 1 || typeof f.description !== 'string' || !f.description.trim())) throw new Error('Invalid review format');
+                if ((result.verdict === 'pass') !== (result.findings.length === 0)) throw new Error('Verdict and findings do not agree');
+                const passed = result.verdict === 'pass';
+                state = passed ? 'success' : 'failure';
+                const findings = result.findings.length
+                  ? result.findings.map((f) => `- **${f.severity}** · <code>${safeCode(f.path)}:${f.line}</code> — ${safeText(f.description)}`).join('\n')
+                  : '_No actionable findings._';
+                body = [
+                  `### ${passed ? '✅ PASS' : '⚠️ CHANGES REQUESTED'}`,
+                  '',
+                  '**Summary**',
+                  safeText(result.summary) || 'No summary provided.',
+                  '',
+                  '### Findings',
+                  '',
+                  findings,
+                  '',
+                  '_The reviewer inspected the diff without executing candidate code. CI runs the tests separately._'
+                ].join('\n');
               } catch { body = 'Codex returned an invalid review result. Inspect the workflow and rerun; this is not a passing review.'; }
             }
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.pulls.createReview({ ...context.repo, pull_number: number, commit_id: head, event: 'COMMENT', body: (`## Independent Codex review\n\n${body}\n\nReviewed commit: ${head}\n[Review run](${url})\n\nAI feedback supports the human merge decision.`).slice(0,60000) });
+            await github.rest.pulls.createReview({ ...context.repo, pull_number: number, commit_id: head, event: 'COMMENT', body: (`## Independent Codex review\n\n${body}\n\n**Reviewed commit:** \`${head}\`\n[Review run](${url})\n\nAI feedback supports the human merge decision.`).slice(0,60000) });
             await github.rest.repos.createCommitStatus({ ...context.repo, sha: head, state, context: 'AI review', target_url: url, description: state === 'success' ? 'No actionable defects reported' : 'Review needs attention; inspect the report' });
             if (state !== 'success') core.setFailed('AI review did not pass.');
