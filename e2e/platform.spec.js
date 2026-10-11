@@ -162,6 +162,26 @@ test('maintainer sign-in handles failure then sends CSRF-protected ticket writes
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage }))).not.toContain(api.csrfToken);
 });
 
+for(const view of ['tickets','overview'])test('session changes preserve the '+view+' route after leaving a ticket',async({page})=>{
+  const api=await installPlatformAPI(page);
+  await page.goto('/#ticket/RLY-1');
+  await expect(page.getByRole('heading',{name:api.detail.ticket.title,exact:true})).toBeVisible();
+  const menu=page.getByRole('button',{name:'Open navigation',exact:true});if(await menu.isVisible())await menu.click();
+  await page.getByRole('navigation',{name:'Main navigation'}).getByRole('link',{name:view==='tickets'?/^Tickets/:'Overview'}).click();
+  const heading=page.getByRole('heading',{name:view==='tickets'?'Tickets':'Good work starts with a conversation.',exact:true});
+  await expect(heading).toBeVisible();
+  await page.getByRole('button',{name:'Sign out',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Sign in',exact:true})).toBeVisible();
+  await expect(heading).toBeVisible();
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Maintainer sign-in'});
+  await dialog.getByLabel('Password',{exact:true}).fill('demo-password');await dialog.getByRole('button',{name:'Sign in',exact:true}).click();
+  await expect(dialog).not.toBeVisible();await expect(heading).toBeVisible();
+  await expect(page).toHaveURL(new RegExp('#'+view+'$'));
+  await expect(page.getByRole('heading',{name:api.detail.ticket.title,exact:true})).toHaveCount(0);
+  expect(api.requests.some(request=>request.path.includes('/tickets/null'))).toBe(false);
+});
+
 test('editing preserves a draft when another editor has changed the ticket', async ({ page }) => {
   const api = await installPlatformAPI(page);
   await page.goto('/#ticket/RLY-1');
