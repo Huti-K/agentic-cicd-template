@@ -6,6 +6,7 @@ const json=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status
 const publicJob=job=>{const {description,version,...value}=job;return value;};
 const repositoryURL=repository=>'https://github.com/'+repository;
 const requestImplemented=ticket=>(ticket.implementedRequestRevision||0)===(ticket.requestRevision||0);
+const evidencePending=(ticket,job)=>job.kind==='implement'&&job.status==='succeeded'&&ticket.pendingEvidenceJobId===job.id&&ticket.status==='in_review'&&!ticket.mergePending&&!ticket.pendingAgent&&!ticket.activeJobId&&ticket.headSha===job.headSha&&(ticket.requestRevision||0)===(job.requestRevision||0)&&ticket.description===job.description&&ticket.title===job.title;
 async function body(request) {
   assert(request.headers.get('content-type')?.split(';')[0]==='application/json','Use a JSON request body.',415);
   assert(Number(request.headers.get('content-length')||0)<=48_000,'Request body is too large.',413);
@@ -82,8 +83,9 @@ async function dispatchQueued(store,github,job){
     throw error;
   }
 }
-async function queueJob(store,github,env,id,kind) {
+async function queueJob(store,github,env,id,kind,evidenceSource=null) {
   let ticket=await store.ticket(id);
+  if(evidenceSource)assert(evidencePending(ticket,evidenceSource),'The evidence handoff is no longer current.',409,'stale_job');
   assert(!ticket.mergePending,'A merge is in progress. Wait for its result before starting more work.',409,'merge_pending');
   assert(!['merged','deployed'].includes(ticket.status),'This ticket has already shipped.',409);
   assert(ticket.status!=='human_edit','Resume automation before starting an agent.',409,'human_edit');
@@ -104,6 +106,7 @@ async function queueJob(store,github,env,id,kind) {
     assert(currentPR.state==='open'&&SHA.test(currentPR.head?.sha),'The linked pull request is no longer open.',409);
     if(currentPR.head.sha!==ticket.headSha)ticket=await store.update(ticket,{headSha:currentPR.head.sha});
   }
+  if(evidenceSource)assert(evidencePending(ticket,evidenceSource),'The evidence handoff is no longer current.',409,'stale_job');
   const {job}=await store.startJob(ticket,kind,baseSha);
   await dispatchQueued(store,github,job);return store.job(job.id);
 }
@@ -122,6 +125,14 @@ async function drainPending(store,github,env,id){
     }
   }
   return false;
+}
+async function drainEvidence(store,github,env,job){
+  if(!evidencePending(await store.ticket(job.ticketId),job))return;
+  try{await queueJob(store,github,env,job.ticketId,'evidence',job);}
+  catch(error){
+    const current=await store.ticket(job.ticketId);
+    if(evidencePending(current,job))try{await store.update(current,{error:'PR created; evidence could not start: '+error.message});}catch(conflict){if(conflict.code!=='version_conflict')throw conflict;}
+  }
 }
 async function detail(store,github,id,{withPR=true,cache=false}={}) {
   let [ticket,comments,jobs]=await Promise.all([store.ticket(id),store.comments(id),store.jobs(id)]);
@@ -164,7 +175,7 @@ async function detail(store,github,id,{withPR=true,cache=false}={}) {
         }
       }
     }
-  if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&requestImplemented(ticket)&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent;
+  if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&requestImplemented(ticket)&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&!ticket.pendingEvidenceJobId;
   const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id})));
   return {ticket,comments,jobs:jobs.map(publicJob),evidence,pullRequest,integrationError};
 }
@@ -194,7 +205,7 @@ async function performAction(store,github,env,id,input) {
     await store.update(ticket,{status:ticket.prNumber?'in_review':ticket.triage?.ready?'ready':'new',error:null});
     await store.comment(id,'Automation resumed.','huti','event');return;
   }
-  assert(ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&ticket.prNumber,'This ticket is not ready to merge. Resolve pending feedback first.',409,'merge_blocked');
+  assert(ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&!ticket.pendingEvidenceJobId&&ticket.prNumber,'This ticket is not ready to merge. Resolve pending feedback and evidence first.',409,'merge_blocked');
   assert(requestImplemented(ticket),'The request changed. Run implementation and review fresh evidence before merging.',409,'request_changed');
   assert(SHA.test(input.headSha),'Confirm the exact pull request revision.');
   const pr=await github.pull(ticket.prNumber,await store.jobs(id),ticket.requestRevision||0);
@@ -266,6 +277,7 @@ async function automationCallback(store,github,env,jobId,input) {
   if(['succeeded','failed'].includes(job.status)){
     assert(job.status===input.status,'The job already finished with a different result.',409,'job_finished');
     await drainPending(store,github,env,ticket.id);
+    await drainEvidence(store,github,env,job);
     return {ok:true,duplicate:true};
   }
   assert(ticket.activeJobId===job.id&&ticket.status!=='human_edit','This agent job is no longer current.',409,'stale_job');
@@ -312,18 +324,15 @@ async function automationCallback(store,github,env,jobId,input) {
     ticketChanges={description:triage.description,requestRevision:(latest.requestRevision||0)+(requirementsChanged?1:0),triage,status:triage.ready?'ready':latest.pendingAgent?'new':'human_edit',activeJobId:null,error:null};
     event={body:triage.summary,kind:'triage'};
   }else if(pullRequest){
-    ticketChanges={prNumber:pullRequest.number,prUrl:repositoryURL(github.repository)+'/pull/'+pullRequest.number,headSha:pullRequest.headSha,implementedRequestRevision:job.requestRevision||0,status:'in_review',activeJobId:null,error:null};
+    ticketChanges={prNumber:pullRequest.number,prUrl:repositoryURL(github.repository)+'/pull/'+pullRequest.number,headSha:pullRequest.headSha,implementedRequestRevision:job.requestRevision||0,pendingEvidenceJobId:job.id,status:'in_review',activeJobId:null,error:null};
     event={body:summary,kind:'implementation'};
   }else{
     ticketChanges={status:'in_review',activeJobId:null,error:null};
     event={body:summary,kind:'evidence'};
   }
-  await store.finishJob(job,latest,jobChanges,ticketChanges,event);
+  const completed=await store.finishJob(job,latest,jobChanges,ticketChanges,event);
   await drainPending(store,github,env,ticket.id);
-  const finished=await store.ticket(ticket.id);
-  if(pullRequest&&!finished.pendingAgent&&!finished.activeJobId&&finished.status!=='human_edit'){
-    try{await queueJob(store,github,env,ticket.id,'evidence');}catch(error){const current=await store.ticket(ticket.id);await store.update(current,{error:'PR created; evidence could not start: '+error.message});}
-  }
+  await drainEvidence(store,github,env,completed.job);
   return {ok:true};
 }
 async function deploymentCallback(store,github,env,input) {

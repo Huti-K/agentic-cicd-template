@@ -69,7 +69,7 @@ export class Store {
     if(kind==='evidence')assert(ticket.prNumber&&SHA.test(ticket.headSha)&&!ticket.pendingAgent&&(ticket.requestRevision||0)===(ticket.implementedRequestRevision||0),'The request needs implementation before evidence.',409,'request_changed');
     const id=crypto.randomUUID(),at=now();
     const job={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,requestRevision:ticket.requestRevision||0,evidence:[],consumedPending:ticket.pendingAgent||null,dispatchState:'pending',dispatchUntil:0};
-    const data={...ticket,status:kind==='triage'?'triaging':kind==='implement'?'implementing':'in_review',activeJobId:id,pendingAgent:null,error:null,contributorIds:[...new Set([...ticket.contributorIds,'ai'])]};
+    const data={...ticket,status:kind==='triage'?'triaging':kind==='implement'?'implementing':'in_review',activeJobId:id,pendingAgent:null,pendingEvidenceJobId:null,error:null,contributorIds:[...new Set([...ticket.contributorIds,'ai'])]};
     for(const key of ['version','id','createdAt','updatedAt'])delete data[key];
     let results;
     try{results=await this.db.batch([
@@ -98,7 +98,7 @@ export class Store {
       .bind(now(),job.id,job.dispatchOwner).run();
   }
   async pauseTicket(ticket){
-    const pauseId=crypto.randomUUID(),at=now(),data={...ticket,status:'human_edit',activeJobId:null,pendingAgent:null,error:null,humanPauseId:pauseId};
+    const pauseId=crypto.randomUUID(),at=now(),data={...ticket,status:'human_edit',activeJobId:null,pendingAgent:null,pendingEvidenceJobId:null,error:null,humanPauseId:pauseId};
     for(const key of ['version','id','createdAt','updatedAt'])delete data[key];
     const results=await this.db.batch([
       this.db.prepare('UPDATE tickets SET data=?,version=version+1,updated_at=? WHERE number=? AND version=? RETURNING *').bind(JSON.stringify(data),at,ticketNumber(ticket.id),ticket.version),

@@ -191,6 +191,44 @@ test('a repeated terminal callback recovers an interrupted feedback handoff with
   assert.equal(api.github.dispatches.length, 2);
 });
 
+test('implementation completion recovers one evidence handoff and never revives consumed or superseded work', async context => {
+  for (const scenario of ['recover', 'pause', 'new-work', 'changed-head', 'changed-request']) {
+    const { api, store } = await review(context);
+    const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+    const id = started.data.ticket.activeJobId, payload = { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } }, database = api.env.DB;
+    api.env.DB = new Proxy(database, { get(target, key) {
+      if (key === 'batch') return async statements => { await target.batch(statements); throw new Error('Process interrupted after implementation commit'); };
+      const value = target[key]; return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    assert.equal((await api.callback(id, payload)).status, 500);
+    api.env.DB = database;
+    assert.equal((await store.job(id)).status, 'succeeded');
+    if (scenario === 'pause') {
+      await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+      await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'resume' } });
+    } else if (scenario === 'new-work') {
+      const newer = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+      assert.equal((await api.callback(newer.data.ticket.activeJobId, { status: 'failed', runId: 457, summary: 'Newer work failed.' })).status, 200);
+    } else if (scenario === 'changed-head') await store.update(await store.ticket('RLY-1'), { headSha: 'd'.repeat(40) });
+    else if (scenario === 'changed-request') {
+      const current = await store.ticket('RLY-1');
+      assert.equal((await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, title: 'A changed implementation request' } })).status, 200);
+    }
+    const retries = await Promise.all([api.callback(id, payload), api.callback(id, payload)]);
+    assert.ok(retries.every(result => result.status === 200));
+    const evidence = (await store.jobs('RLY-1')).filter(job => job.kind === 'evidence');
+    assert.equal(evidence.length, scenario === 'recover' ? 1 : 0, scenario);
+    if (scenario === 'recover') {
+      assert.equal(api.github.dispatches.length, 2);
+      assert.equal((await store.ticket('RLY-1')).pendingEvidenceJobId, null);
+      assert.equal((await api.callback(evidence[0].id, { status: 'failed', runId: 458, summary: 'Evidence failed.' })).status, 200);
+      assert.equal((await api.callback(id, payload)).status, 200);
+      assert.equal(api.github.dispatches.length, 2, 'a consumed failed evidence run must not restart');
+      assert.equal((await store.jobs('RLY-1')).filter(job => job.kind === 'evidence').length, 1);
+    }
+  }
+});
+
 test('failed feedback dispatch preserves the request, blocks merge, and retries the latest head', async context => {
   const { api, store } = await review(context);
   const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
