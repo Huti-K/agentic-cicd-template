@@ -13,7 +13,7 @@ export function updateStock(products, barcode, change) {
   if (!Number.isInteger(change)) throw new Error('Quantity must be a whole number.');
   const product = products.find((item) => item.barcode === barcode);
   if (!product) throw new Error('Product not found.');
-  if (product.stock + change < 0) throw new Error('Not enough stock.');
+  if (product.stock + change <= 0) throw new Error('Not enough stock.');
   return products.map((item) => item.barcode === barcode ? { ...item, stock: item.stock + change } : { ...item });
 }
 
