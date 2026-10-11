@@ -85,6 +85,31 @@ test('public ticket view exposes properties and discussion while protecting main
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test('issue connection recovery requires maintainer confirmation and never starts an agent', async ({ page }) => {
+  const api=await installPlatformAPI(page,{authenticated:false});
+  Object.assign(api.detail.ticket,{status:'human_edit',issueNumber:null,issueUrl:null,error:'The previous issue creation is uncertain.'});
+  await page.goto('/#ticket/RLY-1');
+  await page.getByRole('button',{name:'Retry GitHub connection',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Maintainer sign-in'})).toBeVisible();
+  expect(api.requests.filter(r=>r.method==='POST')).toHaveLength(0);
+  api.authenticated=true;await page.reload();
+  await page.getByRole('button',{name:'Retry GitHub connection',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Retry GitHub connection',exact:true});
+  await expect(dialog).toContainText('checks for an existing issue first');
+  await expect(dialog).toContainText('uncertain');
+  expect(api.requests.filter(r=>r.method==='POST')).toHaveLength(0);
+  api.failure={path:'/api/tickets/RLY-1/actions',method:'POST',error:'GitHub is still unavailable.'};
+  await dialog.getByRole('button',{name:'Confirm issue recovery',exact:true}).click();
+  await expect(dialog).toContainText('GitHub is still unavailable.');
+  api.failure=null;
+  await dialog.getByRole('button',{name:'Confirm issue recovery',exact:true}).click();
+  await expect(dialog).not.toBeVisible();
+  expect(api.requests.filter(r=>r.method==='POST').every(r=>r.body.action==='retry-issue'&&r.body.confirmRetry===true)).toBe(true);
+  expect(api.detail.ticket.status).toBe('human_edit');
+  expect(api.detail.jobs).toHaveLength(0);
+  await expect(page.getByRole('button',{name:'Retry GitHub connection',exact:true})).toHaveCount(0);
+});
+
 test('maintainer sign-in handles failure then sends CSRF-protected ticket writes', async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   await page.goto('/');

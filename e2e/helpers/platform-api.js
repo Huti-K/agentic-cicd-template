@@ -121,7 +121,11 @@ export async function installPlatformAPI(page, options = {}) {
       return send(fixture.detail, 201);
     }
     if (path.endsWith('/actions') && method === 'POST') {
-      if (body.action === 'human-edit') {
+      if (body.action === 'retry-issue') {
+        if(body.confirmRetry!==true)return send({error:'Confirm issue recovery.'},400);
+        Object.assign(fixture.detail.ticket,{issueNumber:99,issueUrl:`https://github.com/${REPOSITORY}/issues/99`,error:null});
+      }
+      else if (body.action === 'human-edit') {
         fixture.detail.ticket.status = 'human_edit';
         fixture.detail.jobs.forEach(job => { if (['queued', 'running'].includes(job.status)) { job.status = 'failed'; job.summary = 'Stopped for human editing.'; } });
       }
