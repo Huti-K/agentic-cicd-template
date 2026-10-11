@@ -30,7 +30,7 @@ test('valid clean review passes with a readable report', async () => {
 });
 test('actionable findings fail AI review and link to the reviewed source', async () => {
   const result = await report({ verdict: 'needs_changes', summary: 'Stock reaches an invalid state.', findings: [
-    { severity: 'P2', path: 'demo/src/inventory.js', line: 16, description: 'Allow zero stock.' },
+    { severity: 'P2', path: 'demo/src/workspace.js', line: 16, description: 'Require approval before merging.' },
   ] });
   assert.equal(result.statuses[0].state, 'failure');
   assert.match(result.reviews[0].body, /CHANGES REQUESTED/);

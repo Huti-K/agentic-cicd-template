@@ -1,5 +1,21 @@
 # Delivery architecture
 
+## Relay application
+
+The site is a dependency-free browser application deployed as static files. There is no authentication server or browser credential.
+
+- `demo/src/seed.js` defines fictional projects, people, tickets, PRs and activity.
+- `demo/src/workspace.js` validates the workspace and provides immutable operations. Ticket IDs stay with their project; failed changes leave the original state untouched. A sample PR must pass checks and review before merging.
+- `demo/src/app.js` renders with DOM creation and text nodes. Externally supplied strings are never parsed as HTML. Sample mutations save to a versioned local-storage key.
+- `demo/src/github.js` validates repository names, constructs GitHub URLs, and performs credential-free public API requests. Requests time out, support cancellation, and cache in memory for one minute.
+- `demo/src/pipeline.js` uses the build manifest's repository to show real Actions runs.
+
+The sample state and live GitHub snapshot are distinct. Sample changes cannot publish to GitHub. Write actions are links to GitHub, where its authentication and authorization apply. The site accepts no tokens. A sample ticket can prepare an issue URL, but the user submits the draft on GitHub.
+
+The GitHub adapter reads repository metadata, recent issues/PRs and workflow runs. PR details fetch the current head SHA first, then checks and commit statuses for that SHA, reviews, and conversation comments. Agent review reports appear in the conversation. Review history may concern earlier revisions; the UI does not infer merge permission. GitHub remains the source of truth for branch protection and review resolution.
+
+Live views include refresh time, partial-list notices, loading and error states. Failed refreshes retain the last successful snapshot with an explicit notice. Async requests are cancelled when superseded so a late response cannot overwrite another repository or PR.
+
 ## Issue implementation
 
 1. **gate** checks the initiating maintainer, report structure/size, open issue, and existing PR. It records an immutable base SHA and issue snapshot. CRLF and LF reports are accepted.

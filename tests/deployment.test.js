@@ -42,3 +42,10 @@ test('stale deployments and missing assets fail verification', async () => {
       : { ok: false },
   }), /Missing deployed asset/);
 });
+test('deployment fails when a Relay module is missing even if the HTML is present', async () => {
+  await assert.rejects(verifyDeployment({ url: 'https://example.com/lab/', sha: 'a'.repeat(40), attempts: 1,
+    fetcher: async (url) => url.pathname.endsWith('build.json')
+      ? { ok: true, json: async () => ({ sha: 'a'.repeat(40) }) }
+      : { ok: !url.pathname.endsWith('src/github.js'), text: async () => 'asset' },
+  }), /Missing deployed asset: src\/github.js/);
+});

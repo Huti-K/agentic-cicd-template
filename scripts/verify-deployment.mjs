@@ -12,7 +12,8 @@ export async function verifyDeployment({ url, sha, attempts = 12, delay = 10_000
       if (!response.ok) throw new Error(`build.json returned HTTP ${response.status}`);
       const manifest = await response.json();
       if (manifest.sha !== sha) throw new Error('Pages is still serving a different commit.');
-      for (const asset of ['index.html', 'src/app.js', 'styles.css', 'pipeline.html']) {
+      for (const asset of ['index.html', 'src/app.js', 'src/seed.js', 'src/workspace.js', 'src/github.js', 'styles.css', 'favicon.svg',
+        'pipeline.html', 'src/pipeline.js', 'pipeline.css', 'lab-base.css']) {
         const assetResponse = await fetcher(new URL(asset, base), { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
         if (!assetResponse.ok || !(await assetResponse.text()).trim()) throw new Error(`Missing deployed asset: ${asset}`);
       }
