@@ -24,6 +24,7 @@ const safeMarkdown = value => String(value).replace(/[\r\n]+/g, ' ').replace(/([
 export async function currentJob(api, old) {
   const next = validateSnapshot(await api.platform(jobPath()), { repository: env.GITHUB_REPOSITORY, jobId: env.JOB_ID, ticketId: old.ticket.id, kind: old.job.kind });
   if (next.job.id !== old.job.id || next.ticket.headSha !== old.ticket.headSha || next.ticket.prNumber !== old.ticket.prNumber
+    || (next.ticket.requestRevision ?? 0) !== (old.ticket.requestRevision ?? 0)
     || next.ticket.description !== old.ticket.description || next.ticket.title !== old.ticket.title || next.ticket.status === 'human_edit') throw new Error('Ticket changed while the agent was working.');
   if (old.ticket.prNumber) assertCurrentPr(await api.github(`pulls/${old.ticket.prNumber}`), old);
   else if (old.recoveredPrNumber) assertCurrentPr(await api.github(`pulls/${old.recoveredPrNumber}`), { ...old, ticket: { ...old.ticket, headSha: old.sourceSha } });

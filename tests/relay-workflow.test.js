@@ -182,6 +182,12 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     await assert.rejects(currentJob(api, value), /Ticket changed/);
     current = structuredClone(value); current.ticket.title = 'A new request title';
     await assert.rejects(currentJob(api, value), /Ticket changed/);
+    current = structuredClone(value); current.ticket.requestRevision = 0;
+    await assert.doesNotReject(currentJob(api, value));
+    for (const requestRevision of [1, 2]) { // Includes edits reverted to identical text and type-only changes.
+      current = structuredClone(value); current.ticket.requestRevision = requestRevision;
+      await assert.rejects(currentJob(api, value), /Ticket changed/);
+    }
     current = structuredClone(value); current.job.status = 'succeeded';
     await assert.rejects(currentJob(api, value), /stale/);
     current = structuredClone(value); current.ticket.headSha = nextSha; current.job.headSha = nextSha;
