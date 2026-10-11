@@ -52,6 +52,8 @@ An artifact link is not an assertion that every test passed. Check the workflow 
 
 Use **Comment type → Feedback** to request another implementation pass. Write actionable feedback: what is wrong, the expected behavior, and any additional acceptance criteria. Mentioning `@ai` on a ticket that already has a PR also requests another implementation run.
 
+If an agent is already running, feedback is saved and combined into one follow-up run after it finishes. Pending feedback blocks merging. If GitHub cannot start that run, the ticket keeps the feedback and shows a retry action instead of discarding it.
+
 Choose **Switch to human editing** when a person needs to change the code or clarify the approach. Active jobs are cancelled for that ticket and stale callbacks cannot restore their old state. Discussion can continue without automatically launching another agent. Choose **Resume agents** after the manual work is ready for automation again.
 
 **Approve and merge** is enabled only when the server reports current checks, independent review, evidence, and mergeability ready. The confirmation displays the exact head SHA. **Merge this revision** submits that SHA, and the backend rechecks the live PR before merging. If the PR has changed, review the newer revision and obtain fresh evidence instead of retrying an old approval.
@@ -68,6 +70,8 @@ After merge, main CI verifies and deploys the Cloudflare Worker and static appli
 This is a demo inbox, not an email service. It sends no email and does not connect to a real customer mailbox. Receiving a message creates a persistent ticket and requests actual agent work, so maintainer authentication is required.
 
 An idempotency key protects retries of the same email submission. If the network fails, keep the draft and retry it unchanged. Editing the payload starts a distinct request.
+
+The inbox message and its ticket are saved together. An interrupted delivery can resume with the same key after its short processing lease expires. GitHub issue creation remains an external operation; if GitHub accepted an issue immediately before a connection was interrupted, check the repository for a duplicate issue when recovering.
 
 ## Local development and configuration
 
