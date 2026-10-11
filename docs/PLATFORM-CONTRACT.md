@@ -8,7 +8,8 @@ Writes require a `X-CSRF-Token` returned by the session endpoint. No browser Git
 
 - `GET /api/session` → `{ authenticated, user: { id, name, handle } | null, csrfToken?: string }`.
 - `POST /api/session` `{ password }` → session above; secure HttpOnly session cookie. `DELETE /api/session` logs out.
-- `GET /api/workspace` → `{ repository, people, projects, tickets, jobs, integration: { github, agents }, deployment: { url, sha } }`.
+- `GET /api/workspace` → `{ repository, people, projects, tickets, ticketCounts: { total, statuses, priorities }, activeJobCount, attentionTickets, jobs, integration: { github, agents }, deployment: { url, sha } }`. Tickets are the latest 50; counts cover the complete workspace and attention tickets are selected across it. Jobs are recent activity, not the source of aggregate counts.
+- `GET /api/tickets?query=&status=&priority=&limit=50&cursor=` → `{ tickets, total, nextCursor }`. Search and filters run over all tickets. The numeric cursor continues descending ticket-number order; `total` is the complete filtered count. A null next cursor means the last page.
 - `GET /api/tickets/:id` → `{ ticket, comments, jobs, evidence, pullRequest }`.
 - `POST /api/tickets` `{ title, description, type: 'bug'|'feature'|'task', priority, tags?: string[], assigneeId?: string, contributorIds?: string[] }` → ticket detail.
 - `PATCH /api/tickets/:id` `{ version, title?, description?, priority?, tags?, assigneeId?, contributorIds? }` → ticket detail. Reject stale versions with 409.
@@ -23,7 +24,7 @@ Person: `{ id, handle, name, initials, color, role }`; handles include `huti`, `
 Comment: `{ id, ticketId, authorId, body, kind, createdAt }`.
 Job: `{ id, ticketId, kind: 'triage'|'implement'|'evidence', status: 'queued'|'running'|'succeeded'|'failed', runId, runUrl, headSha, summary, createdAt, updatedAt }`.
 Evidence: `{ id, jobId, headSha, kind: 'report'|'video'|'screenshot'|'artifact', title, url }`. Only trusted generated evidence, never fabricated successful tests.
-Pull request: `{ number, url, title, headSha, state, checks: [{name, status, conclusion}], reviewState, mergeable, files: [{path, additions, deletions}], checksReady, evidenceReady, canMerge }` or null. The backend rechecks before merge.
+Pull request: `{ number, url, title, headSha, state, checks: [{name, status, conclusion}], freshness: { fetchedAt, expiresAt?, cached }, reviewState, mergeable, files: [{path, additions, deletions}], checksReady, evidenceReady, canMerge }` or null. Public reads share a 30-second cache; errors use a short retry backoff. The backend bypasses that cache before merge and when reconciling a pending merge.
 Inbox message: `{ id, senderName, senderEmail, subject, body, ticketId, createdAt }`.
 
 ## Workflow API
