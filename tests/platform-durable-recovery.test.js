@@ -226,6 +226,25 @@ test('an interrupted queued dispatch is resumed under one lease without allocati
   assert.equal((await store.ticket('RLY-1')).activeJobId, started.job.id);
 });
 
+test('a pending dispatch older than the activity window resumes the same job exactly once', async context => {
+  const { api, store, ticket: original } = await ticket(context);
+  const started = await store.startJob(original, 'triage', BASE_SHA);
+  await api.DB.prepare('UPDATE jobs SET created_at=? WHERE id=?').bind(old, started.job.id).run();
+  const other = await store.create({ ...original, status: 'ready', activeJobId: null });
+  await api.DB.batch(Array.from({ length: 100 }, (_, index) => api.DB.prepare('INSERT INTO jobs(id,ticket_id,kind,status,data,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+    .bind('finished-'+index, other.id, 'triage', 'succeeded', '{}', '2020-01-01T00:00:00.000Z', old)));
+  assert.equal((await store.jobs()).some(job => job.id === started.job.id), false);
+  const attempts = await Promise.all([1,2].map(() => api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } })));
+  assert.ok(attempts.some(result => result.status === 200));
+  assert.ok(attempts.every(result => [200,409].includes(result.status)));
+  assert.equal(api.github.dispatches.length, 1);
+  assert.equal((await store.job(started.job.id)).dispatchState, 'accepted');
+  assert.equal((await store.ticket('RLY-1')).activeJobId, started.job.id);
+  assert.equal((await api.DB.prepare('SELECT COUNT(*) AS count FROM jobs').first()).count, 101);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } })).status, 409);
+  assert.equal(api.github.dispatches.length, 1);
+});
+
 test('simultaneous feedback comments preserve both requests and one active follow-up', async context => {
   const { api, store } = await ticket(context);
   const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });

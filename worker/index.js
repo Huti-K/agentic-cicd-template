@@ -88,7 +88,7 @@ async function queueJob(store,github,env,id,kind) {
   assert(!['merged','deployed'].includes(ticket.status),'This ticket has already shipped.',409);
   assert(ticket.status!=='human_edit','Resume automation before starting an agent.',409,'human_edit');
   if(ticket.pendingAgent)kind=ticket.prNumber?'implement':'triage';
-  const active=(await store.jobs()).filter(job=>['queued','running'].includes(job.status));
+  const active=await store.activeJobs();
   const existing=active.find(job=>job.ticketId===id);
   if(existing&&existing.id===ticket.activeJobId&&existing.dispatchState==='pending'&&await dispatchQueued(store,github,existing))return store.job(existing.id);
   assert(!existing,'An agent is already working on this ticket.',409,'job_active');

@@ -56,6 +56,7 @@ export class Store {
   jobRow(row){return row?{...JSON.parse(row.data),id:row.id,ticketId:row.ticket_id,kind:row.kind,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at}:null;}
   async job(id){const row=await this.db.prepare('SELECT * FROM jobs WHERE id=?').bind(id).first();if(!row)throw new HttpError(404,'Agent job not found.');return this.jobRow(row);}
   async jobs(ticketId){const statement=ticketId?this.db.prepare('SELECT * FROM jobs WHERE ticket_id=? ORDER BY created_at DESC LIMIT 40').bind(ticketId):this.db.prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 100');const {results}=await statement.all();return results.map(row=>this.jobRow(row));}
+  async activeJobs(){const {results}=await this.db.prepare("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();return results.map(row=>this.jobRow(row));}
   async createJob(ticket,kind,baseSha){
     const id=crypto.randomUUID(),at=now(),data={runId:null,runUrl:null,headSha:ticket.headSha||null,baseSha,summary:'Waiting for GitHub Actions',title:ticket.title,description:ticket.description,version:ticket.version,requestRevision:ticket.requestRevision||0,evidence:[]};
     try{await this.db.prepare('INSERT INTO jobs(id,ticket_id,kind,status,data,created_at,updated_at) VALUES(?,?,?,\'queued\',?,?,?)').bind(id,ticket.id,kind,JSON.stringify(data),at,at).run();}
