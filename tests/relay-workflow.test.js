@@ -102,6 +102,11 @@ test('publish/report require isolated verification, trusted automation, and exac
   assert.match(config, /retries: 0/);
   assert.match(config, /forbidOnly: true/);
 });
+test('the nested evidence configuration starts its server in the candidate workspace root', async () => {
+  const { default: config } = await import('../scripts/relay/playwright.config.mjs');
+  assert.equal(config.webServer.cwd, process.cwd());
+  assert.equal(config.testDir, join(process.cwd(), 'e2e/agent'));
+});
 
 test('trusted preparation and publisher use job freshness checks and an atomic non-force branch update', async () => {
   const originalDirectory = process.cwd();
