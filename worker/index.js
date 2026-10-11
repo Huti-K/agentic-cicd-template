@@ -40,18 +40,35 @@ async function ensureIssue(store,github,ticket) {
 }
 async function createTicket(store,github,input) {
   const properties=ticketInput(input);
-  let ticket=await store.create({...properties,originalDescription:properties.description,status:'new',issueNumber:null,issueUrl:null,prNumber:null,prUrl:null,headSha:null,triage:null,error:null,activeJobId:null,mergeCommitSha:null,mergePending:false});
+  let ticket=await store.create(newTicket(properties));
   try{ticket=await ensureIssue(store,github,ticket);}catch(error){ticket=await store.update(ticket,{error:error.message});}
   await store.comment(ticket.id,'Ticket created. Mention @ai to start triage.','huti','event');
   return ticket;
+}
+function newTicket(properties){return {...properties,originalDescription:properties.description,status:'new',issueNumber:null,issueUrl:null,prNumber:null,prUrl:null,headSha:null,triage:null,error:null,activeJobId:null,pendingAgent:null,mergeCommitSha:null,mergePending:false};}
+async function dispatchQueued(store,github,job){
+  const claimed=await store.claimDispatch(job);
+  if(!claimed)return false;
+  try{await github.dispatch(claimed);await store.acceptedDispatch(claimed);return true;}
+  catch(error){
+    const current=await store.job(job.id);
+    if(current.runId)return true; // A callback proves GitHub accepted an ambiguous response.
+    await store.updateJob(current,{status:'failed',summary:error.message});
+    const ticket=await store.ticket(job.ticketId);
+    if(ticket.activeJobId===job.id)await store.update(ticket,{status:'failed',activeJobId:null,pendingAgent:ticket.pendingAgent||job.consumedPending||null,error:error.message});
+    throw error;
+  }
 }
 async function queueJob(store,github,env,id,kind) {
   let ticket=await store.ticket(id);
   assert(!ticket.mergePending,'A merge is in progress. Wait for its result before starting more work.',409,'merge_pending');
   assert(!['merged','deployed'].includes(ticket.status),'This ticket has already shipped.',409);
   assert(ticket.status!=='human_edit','Resume automation before starting an agent.',409,'human_edit');
+  if(ticket.pendingAgent)kind=ticket.prNumber?'implement':'triage';
   const active=(await store.jobs()).filter(job=>['queued','running'].includes(job.status));
-  assert(!active.some(job=>job.ticketId===id),'An agent is already working on this ticket.',409,'job_active');
+  const existing=active.find(job=>job.ticketId===id);
+  if(existing&&existing.id===ticket.activeJobId&&existing.dispatchState==='pending'&&await dispatchQueued(store,github,existing))return store.job(existing.id);
+  assert(!existing,'An agent is already working on this ticket.',409,'job_active');
   assert(active.length<3,'Three agents are already running. Try again when one finishes.',429,'agent_capacity');
   if(kind==='implement')assert(ticket.triage?.ready||ticket.prNumber,'Triage must mark this ticket ready before implementation.',409,'not_ready');
   if(kind==='evidence')assert(ticket.prNumber&&SHA.test(ticket.headSha),'A pull request is required for evidence.',409);
@@ -63,18 +80,24 @@ async function queueJob(store,github,env,id,kind) {
     assert(currentPR.state==='open'&&SHA.test(currentPR.head?.sha),'The linked pull request is no longer open.',409);
     if(currentPR.head.sha!==ticket.headSha)ticket=await store.update(ticket,{headSha:currentPR.head.sha});
   }
-  const job=await store.createJob(ticket,kind,baseSha);
-  try{
-    ticket=await store.update(ticket,{status:kind==='triage'?'triaging':kind==='implement'?'implementing':'in_review',activeJobId:job.id,error:null,contributorIds:[...new Set([...ticket.contributorIds,'ai'])]});
-    await github.dispatch(job);
-    await store.comment(id,(kind==='triage'?'Triage':kind==='implement'?'Implementation':'Evidence')+' agent queued in GitHub Actions.','ai','event');
-    return job;
-  }catch(error){
-    await store.updateJob(job,{status:'failed',summary:error.message});
-    const latest=await store.ticket(id);
-    if(latest.activeJobId===job.id)await store.update(latest,{status:'failed',activeJobId:null,error:error.message});
-    throw error;
+  const {job}=await store.startJob(ticket,kind,baseSha);
+  await dispatchQueued(store,github,job);return store.job(job.id);
+}
+async function drainPending(store,github,env,id){
+  for(let attempt=0;attempt<3;attempt++){
+    const ticket=await store.ticket(id);
+    if(ticket.mergePending||['human_edit','merged','deployed'].includes(ticket.status))return false;
+    if(ticket.activeJobId){const job=await store.job(ticket.activeJobId);if(job.dispatchState==='pending')try{await dispatchQueued(store,github,job);}catch{/* A failed dispatch restores the durable request and error. */}return false;}
+    if(!ticket.pendingAgent)return false;
+    try{await queueJob(store,github,env,id,ticket.prNumber?'implement':'triage');return true;}
+    catch(error){
+      if(['version_conflict','job_active'].includes(error.code))continue;
+      const latest=await store.ticket(id);
+      if(latest.pendingAgent&&!latest.activeJobId)await store.update(latest,{error:'Feedback is saved; its agent could not start. Retry the agent action. '+error.message});
+      return false;
+    }
   }
+  return false;
 }
 async function detail(store,github,id,{withPR=true}={}) {
   let [ticket,comments,jobs]=await Promise.all([store.ticket(id),store.comments(id),store.jobs(id)]);
@@ -89,11 +112,17 @@ async function detail(store,github,id,{withPR=true}={}) {
     pullRequest.number===ticket.prNumber&&pullRequest.headSha===ticket.headSha&&SHA.test(pullRequest.mergeCommitSha)&&
     pullRequest.branch==='relay/ticket-'+ticket.id&&pullRequest.repository===github.repository&&pullRequest.baseBranch==='main'){
     try{
-      ticket=await store.update(ticket,{status:'merged',mergePending:false,mergeCommitSha:pullRequest.mergeCommitSha,error:null});
+      ticket=await store.update(ticket,{status:'merged',mergePending:false,mergeStartedAt:null,pendingAgent:null,mergeCommitSha:pullRequest.mergeCommitSha,error:null});
     }catch(error){
       if(error.code!=='version_conflict')throw error;
       ticket=await store.ticket(id);
     }
+  }
+  const mergeStarted=Date.parse(ticket.mergeStartedAt||ticket.updatedAt);
+  if(ticket.mergePending&&Number.isFinite(mergeStarted)&&Date.now()-mergeStarted>60_000&&pullRequest&&['open','closed'].includes(pullRequest.state)&&
+    pullRequest.number===ticket.prNumber&&pullRequest.headSha===ticket.headSha&&pullRequest.branch==='relay/ticket-'+ticket.id&&pullRequest.repository===github.repository&&pullRequest.baseBranch==='main'){
+    try{ticket=await store.update(ticket,{mergePending:false,mergeStartedAt:null,error:'The previous merge was interrupted. GitHub confirms this revision is unmerged; review it and retry.'});}
+    catch(error){if(error.code!=='version_conflict')throw error;ticket=await store.ticket(id);}
   }
     // A deployment callback may have arrived while the local merge result was
     // missing. Retry this check on later reads if GitHub was unavailable.
@@ -109,20 +138,18 @@ async function detail(store,github,id,{withPR=true}={}) {
         }
       }
     }
-  if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending;
+  if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent;
   const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id})));
   return {ticket,comments,jobs:jobs.map(publicJob),evidence,pullRequest,integrationError};
 }
 async function stopForHuman(store,github,ticket) {
   assert(!ticket.mergePending,'A merge is in progress. Wait for its result before switching to human editing.',409,'merge_pending');
-  const jobs=await store.jobs(ticket.id);
-  for(const job of jobs.filter(job=>['queued','running'].includes(job.status))){
-    await store.updateJob(job,{status:'failed',summary:'Stopped for human editing.'});
+  // Pause first: a concurrent queue or terminal callback must fail its version
+  // guard before any network cancellation work can yield control.
+  const {ticket:updated,jobs}=await store.pauseTicket(ticket);
+  for(const job of jobs){
     if(job.runId)try{await github.call('/actions/runs/'+job.runId+'/cancel',{method:'POST'});}catch{/* Local cancellation still prevents callback publication. */}
   }
-  const latest=await store.ticket(ticket.id);
-  assert(!latest.mergePending,'A merge started while automation was stopping. Wait for its result.',409,'merge_pending');
-  const updated=await store.update(latest,{status:'human_edit',activeJobId:null,error:null});
   await store.comment(ticket.id,'Automation paused for human editing. Resume when the ticket is ready.','huti','event');return updated;
 }
 async function performAction(store,github,env,id,input) {
@@ -136,57 +163,65 @@ async function performAction(store,github,env,id,input) {
     await store.update(ticket,{status:ticket.prNumber?'in_review':ticket.triage?.ready?'ready':'new',error:null});
     await store.comment(id,'Automation resumed.','huti','event');return;
   }
-  assert(ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&ticket.prNumber,'This ticket is not ready to merge.',409,'merge_blocked');
+  assert(ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&ticket.prNumber,'This ticket is not ready to merge. Resolve pending feedback first.',409,'merge_blocked');
   assert(SHA.test(input.headSha),'Confirm the exact pull request revision.');
   const pr=await github.pull(ticket.prNumber,await store.jobs(id));
   assert(pr.headSha===input.headSha&&pr.headSha===ticket.headSha,'The pull request changed. Review the current revision before merging.',409,'stale_head');
   assert(pr.canMerge&&pr.branch==='relay/ticket-'+ticket.id,'Merge is blocked. Current-head checks, independent AI review, and successful evidence are required on the ticket branch.',409,'merge_blocked');
-  ticket=await store.update(ticket,{mergePending:true});
+  ticket=await store.update(ticket,{mergePending:true,mergeStartedAt:now()});
   try{
     const result=await github.call('/pulls/'+ticket.prNumber+'/merge',{method:'PUT',body:{sha:input.headSha,merge_method:'squash',commit_title:ticket.title+' (#'+ticket.prNumber+')'}});
     assert(result.merged&&SHA.test(result.sha),'GitHub did not merge the pull request. Check branch protection.',409);
     const latest=await store.ticket(id);
-    await store.update(latest,{status:latest.status==='deployed'&&latest.mergeCommitSha===result.sha?'deployed':'merged',mergePending:false,mergeCommitSha:result.sha,error:null});
+    await store.update(latest,{status:latest.status==='deployed'&&latest.mergeCommitSha===result.sha?'deployed':'merged',mergePending:false,mergeStartedAt:null,pendingAgent:null,mergeCommitSha:result.sha,error:null});
     await store.comment(id,'Approved and merged PR #'+ticket.prNumber+'. Cloudflare deployment will follow main CI.','huti','event');
-  }catch(error){const latest=await store.ticket(id);if(latest.mergePending)await store.update(latest,{mergePending:false,error:error.message});throw error;}
+  }catch(error){const latest=await store.ticket(id);if(latest.mergePending)await store.update(latest,{error:'Merge result could not be confirmed. Refresh after a minute to reconcile GitHub. '+error.message});throw error;}
 }
 async function comment(store,github,env,id,input) {
   const content=text(input.body,8000,'Comment'),kind=input.kind||'comment';
   assert(['comment','feedback'].includes(kind),'Choose comment or feedback.');
-  let ticket=await store.ticket(id);
-  assert(!['merged','deployed'].includes(ticket.status)||kind!=='feedback','A shipped ticket cannot restart implementation.',409);
-  if(kind==='feedback')assert(ticket.prNumber,'Feedback requires a linked pull request.',409);
   const added=mentions(content);
-  const contributors=[...new Set([...ticket.contributorIds,'huti',...added])];
-  if(JSON.stringify(contributors)!==JSON.stringify(ticket.contributorIds))ticket=await store.update(ticket,{contributorIds:contributors});
-  await store.comment(id,content,'huti',kind);
-  if((added.includes('ai')||kind==='feedback')&&!ticket.mergePending&&ticket.status!=='human_edit'&&!['merged','deployed'].includes(ticket.status)){
-    try{await queueJob(store,github,env,id,ticket.prNumber?'implement':'triage');}
-    catch(error){
-      if(error.code==='job_active')await store.comment(id,'An agent is already running. This comment is saved; it will be available to the next run.','ai','event');
-      else{const current=await store.ticket(id);await store.update(current,{error:error.message});}
-    }
+  let ticket;
+  for(let attempt=0;attempt<3;attempt++){
+    ticket=await store.ticket(id);
+    assert(!['merged','deployed'].includes(ticket.status)||kind!=='feedback','A shipped ticket cannot restart implementation.',409);
+    if(kind==='feedback')assert(ticket.prNumber,'Feedback requires a linked pull request.',409);
+    const changes={contributorIds:[...new Set([...ticket.contributorIds,'huti',...added])]};
+    if((added.includes('ai')||kind==='feedback')&&!ticket.mergePending&&!['human_edit','merged','deployed'].includes(ticket.status))changes.pendingAgent={id:crypto.randomUUID(),requestedAt:now()};
+    try{ticket=await store.appendComment(ticket,content,kind,changes);break;}
+    catch(error){if(error.code!=='version_conflict'||attempt===2)throw error;}
+  }
+  if(ticket.pendingAgent){
+    if(ticket.activeJobId)await store.comment(id,'Feedback saved. One follow-up agent will start after the current run completes.','ai','event');
+    else await drainPending(store,github,env,id);
   }
 }
 async function inboxRequest(store,github,env,input) {
   const senderName=text(input.senderName,100,'Sender name'),senderEmail=text(input.senderEmail,160,'Sender email'),subject=text(input.subject,160,'Subject'),content=text(input.body,8000,'Email body'),key=text(input.idempotencyKey,100,'Idempotency key');
   assert(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderEmail),'Enter a valid fictional sender email.');
   const requestHash=await sha256(JSON.stringify({senderName,senderEmail,subject,body:content}));
-  let existing=await store.db.prepare('SELECT * FROM inbox WHERE idempotency_key=?').bind(key).first();
-  if(existing){
-    assert(existing.request_hash===requestHash,'This request key was already used with different email content.',409,'idempotency_conflict');
-    const message=JSON.parse(existing.data);assert(message.ticketId,'This request is still being processed. Retry with the same key.',409,'request_processing');
-    return {message,ticket:await store.ticket(message.ticketId)};
-  }
-  const message={id:crypto.randomUUID(),senderName,senderEmail,subject,body:content,ticketId:null,createdAt:now()};
-  try{await store.db.prepare('INSERT INTO inbox(id,idempotency_key,request_hash,data,created_at) VALUES(?,?,?,?,?)').bind(message.id,key,requestHash,JSON.stringify(message),message.createdAt).run();}
-  catch(error){if(String(error).includes('UNIQUE'))throw new HttpError(409,'This request is being processed. Retry with the same key.','request_processing');throw error;}
-  const ticket=await createTicket(store,github,{title:subject,description:content,type:'task',priority:'medium',tags:['support','mock-email']});
-  message.ticketId=ticket.id;
-  await store.db.prepare('UPDATE inbox SET data=? WHERE id=?').bind(JSON.stringify(message),message.id).run();
-  await store.comment(ticket.id,'Created from a simulated support email by '+senderName+'.','huti','event');
-  try{await queueJob(store,github,env,ticket.id,'triage');}catch(error){const latest=await store.ticket(ticket.id);await store.update(latest,{error:error.message});}
-  return {message,ticket:await store.ticket(ticket.id)};
+  let message=await store.inboxTicket(key,requestHash,{id:crypto.randomUUID(),senderName,senderEmail,subject,body:content,ticketId:null,createdAt:now()},newTicket(ticketInput({title:subject,description:content,type:'task',priority:'medium',tags:['support','mock-email']})));
+  if(message.processingComplete)return {message,ticket:await store.ticket(message.ticketId)};
+  message=await store.claimInbox(message.id);
+  let complete=false;
+  try{
+    let ticket=await store.ticket(message.ticketId);
+    const jobs=await store.jobs(ticket.id);
+    if(['human_edit','merged','deployed'].includes(ticket.status)||jobs.some(job=>job.status==='succeeded'||job.runId)){complete=true;}
+    else if(ticket.activeJobId){
+      const active=jobs.find(job=>job.id===ticket.activeJobId);
+      if(active?.dispatchState==='pending')await dispatchQueued(store,github,active);
+      complete=(await store.job(ticket.activeJobId)).dispatchState==='accepted';
+    }
+    else{
+      ticket=await ensureIssue(store,github,ticket);
+      await queueJob(store,github,env,ticket.id,'triage');
+      complete=true;
+      await store.comment(ticket.id,'Created from a simulated support email by '+senderName+'.','huti','event');
+    }
+  }catch(error){const ticket=await store.ticket(message.ticketId);await store.update(ticket,{error:'Email saved; retry delivery with the same key to resume triage. '+error.message});}
+  message=await store.finishInbox(message,complete);
+  return {message,ticket:await store.ticket(message.ticketId)};
 }
 async function automationCallback(store,github,env,jobId,input) {
   const job=await store.job(jobId),ticket=await store.ticket(job.ticketId);
@@ -196,6 +231,7 @@ async function automationCallback(store,github,env,jobId,input) {
   if(job.runId)assert(job.runId===runId,'This callback belongs to another workflow run.',409,'run_mismatch');
   if(['succeeded','failed'].includes(job.status)){
     assert(job.status===input.status,'The job already finished with a different result.',409,'job_finished');
+    await drainPending(store,github,env,ticket.id);
     return {ok:true,duplicate:true};
   }
   assert(ticket.activeJobId===job.id&&ticket.status!=='human_edit','This agent job is no longer current.',409,'stale_job');
@@ -236,7 +272,7 @@ async function automationCallback(store,github,env,jobId,input) {
     ticketChanges={status:job.kind==='evidence'?'in_review':'failed',activeJobId:null,error:summary};
     event={body:summary,kind:'agent'};
   }else if(triage){
-    ticketChanges={description:triage.description,triage,status:triage.ready?'ready':'human_edit',activeJobId:null,error:null};
+    ticketChanges={description:triage.description,triage,status:triage.ready?'ready':latest.pendingAgent?'new':'human_edit',activeJobId:null,error:null};
     event={body:triage.summary,kind:'triage'};
   }else if(pullRequest){
     ticketChanges={prNumber:pullRequest.number,prUrl:repositoryURL(github.repository)+'/pull/'+pullRequest.number,headSha:pullRequest.headSha,status:'in_review',activeJobId:null,error:null};
@@ -246,7 +282,9 @@ async function automationCallback(store,github,env,jobId,input) {
     event={body:summary,kind:'evidence'};
   }
   await store.finishJob(job,latest,jobChanges,ticketChanges,event);
-  if(pullRequest){
+  await drainPending(store,github,env,ticket.id);
+  const finished=await store.ticket(ticket.id);
+  if(pullRequest&&!finished.pendingAgent&&!finished.activeJobId&&finished.status!=='human_edit'){
     try{await queueJob(store,github,env,ticket.id,'evidence');}catch(error){const current=await store.ticket(ticket.id);await store.update(current,{error:'PR created; evidence could not start: '+error.message});}
   }
   return {ok:true};
