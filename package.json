@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "lint": "node scripts/lint.mjs",
-    "test": "node --test tests/*.test.js tests/demo/*.test.js",
+    "test": "node scripts/test.mjs",
     "test:browser": "playwright test",
     "tools:install": "node scripts/install-tools.mjs",
     "lint:workflows": ".cache/tools/actionlint -shellcheck=",
