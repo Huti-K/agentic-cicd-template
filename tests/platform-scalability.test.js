@@ -109,6 +109,30 @@ test('a human pause or changed implementation request during issue linking canno
   }
 });
 
+test('only confirmed maintainer recovery can recreate an absent ambiguous issue, without starting an agent',async context=>{
+  for(const exists of [false,true]){
+    const api=await platformHarness(context);await api.signIn();api.env.GITHUB_TOKEN='';
+    const ticket=(await api.createTicket()).data.ticket,store=new Store(api.DB);api.env.GITHUB_TOKEN='fixture';
+    const claim=await store.claimIssue(ticket.id);await store.issueAttempt(claim,true);await store.releaseIssue(claim);
+    if(exists)await new GitHub(api.env,api.github.fetcher).createIssue(ticket,claim.marker);
+    await store.pauseTicket(await store.ticket(ticket.id));
+    const posts=api.github.issues.length;
+    const action=body=>api.request('/api/tickets/RLY-1/actions',{method:'POST',body});
+    assert.equal((await action({action:'retry-issue'})).status,400);
+    assert.equal(api.github.issues.length,posts);
+    const recovered=await action({action:'retry-issue',confirmRetry:true});
+    assert.equal(recovered.status,200);assert.equal(recovered.data.ticket.issueNumber,100);
+    assert.equal(recovered.data.ticket.status,'human_edit');assert.equal(recovered.data.jobs.length,0);
+    assert.equal(api.github.issues.length,1);assert.equal(api.github.dispatches.length,0);
+    for(const state of [{mergePending:true},{mergePending:false,status:'merged'},{status:'deployed'}]){
+      await store.update(await store.ticket(ticket.id),state);
+      assert.equal((await action({action:'retry-issue',confirmRetry:true})).status,409);
+    }
+    const active=await store.update(await store.ticket(ticket.id),{status:'new'});await store.startJob(active,'triage',BASE_SHA);
+    assert.equal((await action({action:'retry-issue',confirmRetry:true})).status,409);
+  }
+});
+
 test('public PR reads share a durable cache while approval fetches fresh checks', async context => {
   const api = await platformHarness(context);await api.signIn();api.env.GITHUB_PUBLIC_CACHE_SECONDS = '30';
   const store = new Store(api.DB), ticket = await store.update((await api.createTicket()).data.ticket, { status: 'in_review', prNumber: 71, headSha: PR_SHA });

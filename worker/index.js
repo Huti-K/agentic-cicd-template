@@ -34,7 +34,7 @@ function cookieHeader(token,request,maxAge=43_200) {
   const local=['localhost','127.0.0.1'].includes(new URL(request.url).hostname);
   return 'relay_session='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+maxAge+(local?'':'; Secure');
 }
-async function ensureIssue(store,github,ticket) {
+async function ensureIssue(store,github,ticket,{confirmedRetry=false}={}) {
   if(ticket.issueNumber)return ticket;
   assert(github.env.GITHUB_TOKEN,'GitHub integration is not configured.',503,'integration_unavailable');
   const claim=await store.claimIssue(ticket.id);
@@ -42,10 +42,12 @@ async function ensureIssue(store,github,ticket) {
     ticket=await store.ticket(ticket.id);
     if(ticket.issueNumber){await store.releaseIssue(claim);return ticket;}
     let issue;
-    if(claim.attempted){
+    if(claim.attempted||confirmedRetry){
       issue=await github.findIssue(ticket,claim.marker);
-      assert(issue,'The previous GitHub issue creation is uncertain. Retry reconciliation shortly; no duplicate issue was created.',409,'issue_uncertain');
-    }else{
+      assert(issue||confirmedRetry,'GitHub creation is uncertain. Use Retry GitHub connection to reconcile it and explicitly approve another attempt if no issue is found.',409,'issue_uncertain');
+    }
+    if(!issue){
+      if(confirmedRetry){ticket=await store.ticket(ticket.id);assert(!ticket.activeJobId&&!ticket.mergePending&&!['merged','deployed'].includes(ticket.status),'The workflow changed. Wait for active work before retrying the GitHub connection.',409,'workflow_changed');}
       await store.issueAttempt(claim,true);
       issue=await github.createIssue(ticket,claim.marker);
     }
@@ -178,8 +180,13 @@ async function stopForHuman(store,github,ticket) {
 }
 async function performAction(store,github,env,id,input) {
   let ticket=await store.ticket(id);
-  assert(['triage','implement','evidence','human-edit','resume','approve-merge'].includes(input.action),'Unknown ticket action.');
+  assert(['triage','implement','evidence','human-edit','resume','approve-merge','retry-issue'].includes(input.action),'Unknown ticket action.');
   assert(!ticket.mergePending,'A merge is in progress. Wait for its result before changing the workflow.',409,'merge_pending');
+  if(input.action==='retry-issue'){
+    assert(input.confirmRetry===true,'Confirm the GitHub issue recovery before retrying.');
+    assert(!ticket.activeJobId&&!['merged','deployed'].includes(ticket.status)&&!(await store.jobs(id)).some(job=>['queued','running'].includes(job.status)),'Wait for active work before retrying the GitHub connection.',409,'workflow_changed');
+    await ensureIssue(store,github,ticket,{confirmedRetry:true});return;
+  }
   if(['triage','implement','evidence'].includes(input.action)){await queueJob(store,github,env,id,input.action);return;}
   if(input.action==='human-edit'){assert(!['merged','deployed'].includes(ticket.status),'A shipped ticket cannot be edited.',409);await stopForHuman(store,github,ticket);return;}
   if(input.action==='resume'){
