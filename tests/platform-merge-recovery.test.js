@@ -18,7 +18,7 @@ test('an in-flight merge blocks edits and agent/human state transitions while pr
   }
   const edit=await api.request('/api/tickets/RLY-1',{method:'PATCH',body:{version:ticket.version,title:'Changed while merging'}});
   assert.equal(edit.status,409);
-  const commented=await api.request('/api/tickets/RLY-1/comments',{method:'POST',body:{body:'@ai please keep this follow-up note.',kind:'feedback'}});
+  const commented=await api.request('/api/tickets/RLY-1/comments',{method:'POST',body:{body:'Please keep this follow-up note.',kind:'comment'}});
   assert.equal(commented.status,200);
   assert.ok(commented.data.comments.some(comment=>comment.body.includes('follow-up note')));
   assert.equal(commented.data.ticket.mergePending,true);
@@ -26,6 +26,27 @@ test('an in-flight merge blocks edits and agent/human state transitions while pr
   assert.equal(commented.data.jobs.length,0);
   assert.equal(api.github.dispatches.length,0);
   assert.equal(api.github.mergeCalls,0);
+});
+
+test('merge-pending feedback is rejected intact while ordinary discussion survives failed-merge recovery',async context=>{
+  const {api,store,ticket}=await reviewTicket(context,{mergePending:true,mergeStartedAt:new Date().toISOString()});
+  const initialComments=(await store.comments(ticket.id)).length;
+  for(const input of [{body:'Please add keyboard support.',kind:'feedback'},{body:'@AI please add keyboard support.',kind:'comment'}]){
+    const rejected=await api.request('/api/tickets/RLY-1/comments',{method:'POST',body:input});
+    assert.equal(rejected.status,409);assert.equal(rejected.data.code,'merge_pending');
+    assert.equal((await store.ticket(ticket.id)).version,ticket.version);
+    assert.equal((await store.comments(ticket.id)).length,initialComments);
+  }
+  const ordinary=await api.request('/api/tickets/RLY-1/comments',{method:'POST',body:{body:'I am watching this merge.',kind:'comment'}});
+  assert.equal(ordinary.status,200);assert.equal(ordinary.data.ticket.mergePending,true);
+  await store.update(await store.ticket(ticket.id),{mergeStartedAt:'2000-01-01T00:00:00.000Z'});
+  const recovered=await api.request('/api/tickets/RLY-1');
+  assert.equal(recovered.data.ticket.mergePending,false);
+  assert.equal(recovered.data.ticket.requestRevision||0,ticket.requestRevision||0);
+  assert.equal(recovered.data.ticket.pendingAgent||null,null);
+  const retried=await api.request('/api/tickets/RLY-1/comments',{method:'POST',body:{body:'Please add keyboard support.',kind:'feedback'}});
+  assert.equal(retried.status,200);assert.equal(retried.data.ticket.requestRevision,1);
+  assert.equal(retried.data.ticket.status,'implementing');assert.equal(api.github.dispatches.length,1);
 });
 
 test('a confirmed exact-head GitHub merge recovers a lost local merge result without another merge',async context=>{

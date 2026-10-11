@@ -216,6 +216,7 @@ async function comment(store,github,env,id,input) {
   let ticket;
   for(let attempt=0;attempt<3;attempt++){
     ticket=await store.ticket(id);
+    assert(!ticket.mergePending||(kind!=='feedback'&&!added.includes('ai')),'A merge is in progress. Wait for its result before sending agent feedback. Your comment has not been posted.',409,'merge_pending');
     assert(!['merged','deployed'].includes(ticket.status)||kind!=='feedback','A shipped ticket cannot restart implementation.',409);
     if(kind==='feedback')assert(ticket.prNumber,'Feedback requires a linked pull request.',409);
     const changes={contributorIds:[...new Set([...ticket.contributorIds,'huti',...added])]};
