@@ -56,6 +56,8 @@ Use **Comment type → Feedback** to request another implementation pass. Write 
 
 If an agent is already running, feedback is saved and combined into one follow-up run after it finishes. Pending feedback blocks merging. If GitHub cannot start that run, the ticket keeps the feedback and shows a retry action instead of discarding it.
 
+While a merge result is pending, feedback and `@ai` requests are temporarily rejected and the form keeps your draft. Wait for the merge result before posting that request again.
+
 Choose **Switch to human editing** when a person needs to change the code or clarify the approach. Active jobs are cancelled for that ticket and stale callbacks cannot restore their old state. Discussion can continue without automatically launching another agent. Choose **Resume agents** after the manual work is ready for automation again.
 
 **Approve and merge** is enabled only when the server reports current checks, independent review, evidence, and mergeability ready. The confirmation displays the exact head SHA. **Merge this revision** submits that SHA, and the backend rechecks the live PR before merging. If the PR has changed, review the newer revision and obtain fresh evidence instead of retrying an old approval.
