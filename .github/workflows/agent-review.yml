@@ -110,8 +110,17 @@ jobs:
             const number = Number(process.env.PR_NUMBER);
             const head = process.env.REVIEWED_HEAD;
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
-            if (pr.state !== 'open' || pr.head.sha !== head || pr.base.sha !== process.env.REVIEWED_BASE) {
-              core.notice('PR closed or its head/base changed; discarding stale review.');
+            if (pr.state !== 'open' || pr.head.sha !== head) {
+              core.notice('PR closed or its head changed; discarding stale review.');
+              return;
+            }
+            if (pr.base.sha !== process.env.REVIEWED_BASE) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo, sha: head, state: 'error', context: 'AI review',
+                target_url: context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId,
+                description: 'Base changed during review; rerun independent review for this PR'
+              });
+              core.setFailed('The base branch advanced during review. Rerun Codex independent review for this PR against the current base.');
               return;
             }
             const safeText = (value) => String(value).replace(/\s+/g, ' ').trim()

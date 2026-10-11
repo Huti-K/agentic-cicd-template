@@ -41,6 +41,12 @@ export function createGitHubClient(fetcher = globalThis.fetch) {
     return data;
   }
   async function snapshot(repository, options) {
+    // Refresh applies to all data for this repository, including opened PR details.
+    // Include the slash boundary so owner/repo does not invalidate owner/repo-extra.
+    if (options?.fresh) {
+      const prefix = 'https://api.github.com/repos/' + parseRepository(repository);
+      for (const url of cache.keys()) if (url === prefix || url.startsWith(prefix + '/')) cache.delete(url);
+    }
     const [repo, issues, pulls, runs] = await Promise.all([
       get(repository, '', options), get(repository, '/issues?state=all&sort=updated&per_page=100', options),
       get(repository, '/pulls?state=all&sort=updated&direction=desc&per_page=100', options),
