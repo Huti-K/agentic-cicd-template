@@ -34,7 +34,7 @@ npm run scan:secrets
 
 Browser checks run against the built application on desktop and mobile. Platform cases cover public access and authentication, ticket creation, version-conflict draft preservation, contributor mentions, agent actions, polling without losing an unsent reply, triage references, exact-head merge confirmation, feedback and human editing, safe text/links, read/write failures, and inbox retries. Legacy cases continue to cover the preserved playground and public GitHub adapter.
 
-Platform API and GitHub responses are stubbed in browser CI for deterministic results. Stubs are test-only. Backend integration tests exercise temporary databases and mocked GitHub responses; workflow tests validate the trusted orchestration and artifact boundaries. These tests do not claim that a real paid agent, remote GitHub merge, or Cloudflare deployment happened. Live operational smoke runs must be recorded separately.
+Platform API and GitHub responses are stubbed in browser CI for deterministic results. Stubs are test-only. Backend integration tests exercise temporary databases and mocked GitHub responses. Native workerd tests also exercise Cloudflare's actual fetch and D1 runtime, including authentication, CSRF, issue creation, mentions, Actions dispatch, and redirect rejection. Workflow tests validate the trusted orchestration and artifact boundaries. These tests do not claim that a real paid agent, remote GitHub merge, or Cloudflare deployment happened. Live operational smoke runs must be recorded separately.
 
 CI runs Node 22 and 24. Browser tests serve the built site on port 4174; development defaults to 4173. Reports are saved in ignored `playwright-report/` and `test-results/` directories.
 
@@ -48,11 +48,12 @@ This proves a behavioral difference, not exhaustive correctness. A maintainer st
 
 ## End-to-end agent acceptance
 
-1. Confirm a new bug is reproducible before adding `agent-ready`.
-2. Inspect the implementation run and its **regression-evidence** artifact.
-3. Confirm only demo source and demo tests changed.
-4. Check the exact PR revision has green **verify** and **AI review** statuses.
-5. Inspect browser evidence and reviewer findings, then make the human merge decision.
-6. Follow main CI through the Cloudflare deployment and confirm the public manifest matches the merged commit.
+1. Create a ticket in Relay with a concrete request; include reproduction steps for bugs.
+2. Mention `@ai` and inspect the completed triage, acceptance criteria, and source references.
+3. Choose **Start implementation** and inspect the actual Actions run and linked PR. Bug implementations must demonstrate a failing assertion on the original source.
+4. Confirm only permitted browser source and behavioral tests changed. Check the exact PR revision has green **verify** and **AI review** statuses.
+5. Inspect the separate evidence run's real browser report and videos. Exercise feedback or human editing when changes are needed.
+6. Use **Approve and merge** for the exact reviewed revision, then follow main CI through the Cloudflare deployment and confirm the public manifest matches the deployed commit.
+7. Simulate a fictional support email in the inbox and confirm it creates one ticket and starts triage; retry the same submission to check idempotency.
 
 New workflow definitions take full effect after the upgrade is merged. Deployment only runs from main.
