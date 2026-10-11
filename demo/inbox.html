@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#171e23"><meta name="description" content="Relay connects support conversations to agent triage, pull requests, evidence, and shipped improvements.">
+  <title>Relay Inbox · Customer conversations</title><link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./platform.css"><script type="module" src="./src/platform.js"></script>
+</head>
+<body data-page="inbox">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <button id="nav-overlay" class="nav-overlay" aria-label="Close navigation" hidden></button>
+  <aside id="sidebar" class="sidebar" aria-label="Workspace navigation"></aside>
+  <div class="app-shell">
+    <header class="topbar"><div class="topbar-left"><button class="icon-button mobile-menu" id="menu-button" aria-label="Open navigation" aria-expanded="false">☰</button><span class="breadcrumb">Workspace <span>/</span> <strong id="view-title">Overview</strong></span></div><div class="topbar-actions"><span class="live-label"><span></span> Connected work</span><div id="session-actions"></div></div></header>
+    <div id="connection-banner" class="connection-banner" role="status" hidden></div>
+    <div id="integration-banner" class="connection-banner" role="status" hidden></div>
+    <main id="main-content" tabindex="-1"><div class="loading-state"><span class="loading-orbit"></span><h1>Opening your workspace</h1><p>Connecting tickets, people, and the work ahead.</p></div></main>
+    <footer class="app-footer"><span>One conversation. All the way to shipped.</span><a href="./pipeline.html">GitHub Actions ↗</a></footer>
+  </div>
+  <dialog id="modal" class="modal"></dialog><div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

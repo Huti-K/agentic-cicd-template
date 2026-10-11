@@ -1,0 +1,122 @@
+name: Deploy Relay to Cloudflare
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful CI push run for the current main commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: relay-cloudflare-production
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      ci_run_id: ${{ steps.plan.outputs.ci_run_id }}
+      deploy: ${{ steps.plan.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate CI provenance and reject stale main revisions
+        id: plan
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { deploymentGate } = await import(process.cwd() + '/scripts/relay/deploy.mjs');
+            await deploymentGate({ github, context, core });
+
+  deploy:
+    if: needs.gate.outputs.deploy == 'true'
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    environment:
+      name: cloudflare-production
+      url: ${{ vars.RELAY_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install the pinned deployment CLI without lifecycle scripts or credentials
+        run: npm ci --ignore-scripts
+      - name: Download the browser-tested site from the successful CI run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-preview
+          path: dist
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.gate.outputs.ci_run_id }}
+      - name: Match the artifact to the selected commit and CI run
+        env:
+          DEPLOYED_SHA: ${{ needs.gate.outputs.sha }}
+          CI_RUN_ID: ${{ needs.gate.outputs.ci_run_id }}
+        run: node scripts/relay/deploy.mjs artifact
+      - name: Check main again before database changes
+        id: before_migration
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DEPLOYED_SHA: ${{ needs.gate.outputs.sha }}
+        with:
+          script: |
+            const { deploymentFreshness } = await import(process.cwd() + '/scripts/relay/deploy.mjs');
+            await deploymentFreshness({ github, context, core, sha: process.env.DEPLOYED_SHA });
+      - name: Apply reviewed D1 migrations
+        if: steps.before_migration.outputs.current == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CI: 'true'
+        run: npx --no-install wrangler d1 migrations apply DB --remote --config wrangler.jsonc
+      - name: Check main immediately before publishing
+        if: steps.before_migration.outputs.current == 'true'
+        id: before_deploy
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DEPLOYED_SHA: ${{ needs.gate.outputs.sha }}
+        with:
+          script: |
+            const { deploymentFreshness } = await import(process.cwd() + '/scripts/relay/deploy.mjs');
+            await deploymentFreshness({ github, context, core, sha: process.env.DEPLOYED_SHA });
+      - name: Deploy the Worker and the verified static artifact
+        if: steps.before_deploy.outputs.current == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          RELAY_URL: ${{ vars.RELAY_URL }}
+          CI: 'true'
+        run: npx --no-install wrangler deploy --config wrangler.jsonc --assets dist --var "DEPLOYMENT_URL:$RELAY_URL"
+      - name: Verify the deployed revision and public API without credentials
+        if: steps.before_deploy.outputs.current == 'true'
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
+          DEPLOYED_SHA: ${{ needs.gate.outputs.sha }}
+        run: node scripts/relay/deploy.mjs verify
+      - name: Mark included merged tickets as deployed
+        if: steps.before_deploy.outputs.current == 'true'
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
+          DEPLOYED_SHA: ${{ needs.gate.outputs.sha }}
+          RELAY_CALLBACK_SECRET: ${{ secrets.RELAY_CALLBACK_SECRET }}
+        run: node scripts/relay/deploy.mjs report

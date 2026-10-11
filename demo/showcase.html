@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#191d23">
+  <meta name="description" content="Relay brings tickets, projects, pull requests and agent reviews into one workspace. Explore the sample team or connect a public GitHub repository.">
+  <title>Relay · Your work, connected</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./src/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace-content">Skip to workspace</a>
+  <button id="sidebar-overlay" class="sidebar-overlay" aria-label="Close navigation" hidden></button>
+  <aside class="sidebar" id="sidebar" aria-label="Workspace navigation"></aside>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="icon-button mobile-menu" id="menu-button" aria-label="Open navigation" aria-expanded="false">☰</button>
+      <div class="breadcrumb"><span>Workspace</span><span class="breadcrumb-divider">/</span><strong id="view-title">Overview</strong></div>
+      <div class="topbar-actions">
+        <label class="global-search"><span aria-hidden="true">⌕</span><input id="global-search" type="search" placeholder="Search tickets…" aria-label="Search tickets" maxlength="120"><kbd>/</kbd></label>
+        <button id="new-ticket" class="button primary"><span aria-hidden="true">＋</span> New ticket</button>
+        <span class="avatar violet self-avatar" title="Alex Morgan · Sample account">AM</span>
+      </div>
+    </header>
+    <main id="workspace-content" tabindex="-1"></main>
+    <footer class="app-footer"><span>Built for the work between idea and shipped.</span><a href="./pipeline.html">Explore the real CI/CD pipeline ↗</a></footer>
+  </div>
+  <dialog id="ticket-detail" class="drawer" aria-label="Ticket details"></dialog>
+  <dialog id="pr-detail" class="drawer" aria-label="Pull request details"></dialog>
+  <dialog id="github-detail" class="drawer" aria-label="GitHub details"></dialog>
+  <dialog id="ticket-form-dialog" class="modal" aria-label="Ticket form"></dialog>
+  <dialog id="reset-dialog" class="modal compact" aria-label="Reset sample workspace">
+    <h2>Start with a clean slate?</h2><p>This replaces your locally saved sample tickets, PRs and activity with the original fictional workspace. GitHub is unaffected.</p>
+    <div class="dialog-actions"><button class="button" id="cancel-reset">Keep my changes</button><button class="button danger" id="confirm-reset">Reset sample data</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

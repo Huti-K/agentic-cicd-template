@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "node scripts/serve.mjs",
+    "dev:platform": "npm run build && wrangler d1 migrations apply DB --local && wrangler dev",
     "lint": "node scripts/lint.mjs",
     "test": "node scripts/test.mjs",
     "test:browser": "playwright test",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",
+    "wrangler": "4.149.0",
     "yaml": "2.9.1"
   }
 }

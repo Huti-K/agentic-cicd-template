@@ -7,7 +7,7 @@ async function navigate(page,name) {
 }
 test('overview, projects and ticket filters are connected and render without page errors',async({page})=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/showcase.html');
   await expect(page.getByRole('heading',{name:'Your work, connected.'})).toBeVisible();
   await expect(page.locator('.stats-grid')).toContainText('15');
   await navigate(page,'Projects');
@@ -26,7 +26,7 @@ test('overview, projects and ticket filters are connected and render without pag
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });
 test('create, edit and move a ticket; local persistence preserves plain text safely',async({page})=>{
-  await page.goto('/');
+  await page.goto('/showcase.html');
   await page.getByRole('button',{name:'New ticket',exact:true}).click();
   const form=page.getByRole('dialog',{name:'Ticket form'}),title='<img src=x onerror=alert(1)> A sample ticket';
   await form.getByLabel('Title',{exact:true}).fill(title);
@@ -51,7 +51,7 @@ test('create, edit and move a ticket; local persistence preserves plain text saf
   await expect(detail.getByLabel('Ticket priority')).toHaveValue('urgent');
 });
 test('a bad sample PR cannot merge until fixed, checked and reviewed again',async({page})=>{
-  await page.goto('/#pull-requests');
+  await page.goto('/showcase.html#pull-requests');
   await page.getByRole('button',{name:'Reconcile saved trips after reconnecting',exact:true}).click();
   const detail=page.getByRole('dialog',{name:'Pull request details'});
   await expect(detail.getByRole('button',{name:'Merge sample PR'})).toBeDisabled();
@@ -71,7 +71,7 @@ test('a bad sample PR cannot merge until fixed, checked and reviewed again',asyn
   await expect(page.getByRole('button',{name:'Reconcile saved trips after reconnecting',exact:true})).toBeVisible();
 });
 test('create a linked sample PR and protect the ticket from premature completion',async({page})=>{
-  await page.goto('/#tickets');
+  await page.goto('/showcase.html#tickets');
   await page.getByRole('searchbox',{name:'Search tickets'}).fill('ORB-140');
   await page.locator('.ticket-card').click();
   await page.getByRole('button',{name:'Create sample pull request'}).click();
@@ -86,7 +86,7 @@ test('create a linked sample PR and protect the ticket from premature completion
 });
 test('reset is explicit and corrupted storage recovers',async({page})=>{
   await page.addInitScript(()=>localStorage.setItem('relay.workspace.v1','{broken'));
-  await page.goto('/');
+  await page.goto('/showcase.html');
   await expect(page.getByRole('status')).toContainText('could not be restored');
   const menu=page.getByRole('button',{name:'Open navigation',exact:true});
   if(await menu.isVisible())await menu.click();
@@ -119,7 +119,7 @@ async function stubGitHub(page) {
 }
 test('GitHub shows live issues, PR checks and agent feedback with safe external actions',async({page})=>{
   const requests=[];page.on('request',request=>{if(request.url().startsWith('https://api.github.com/'))requests.push(request);});
-  await stubGitHub(page);await page.goto('/#github');
+  await stubGitHub(page);await page.goto('/showcase.html#github');
   await expect(page.getByRole('button',{name:'Fix ticket status transitions',exact:true})).toBeVisible();
   await expect(page.locator('.live-card')).toHaveCount(1);
   await page.getByRole('button',{name:/Pull requests · 1/}).click();
@@ -136,7 +136,7 @@ test('GitHub shows live issues, PR checks and agent feedback with safe external 
   for(const request of requests){expect(request.method()).toBe('GET');expect(request.headers().authorization).toBeUndefined();}
 });
 test('GitHub keeps the last successful data visible on an API outage',async({page})=>{
-  await stubGitHub(page);await page.goto('/#github');
+  await stubGitHub(page);await page.goto('/showcase.html#github');
   await expect(page.getByRole('button',{name:'Fix ticket status transitions',exact:true})).toBeVisible();
   await page.route('https://api.github.com/repos/**',route=>route.fulfill({status:403,json:{message:'rate limit'}}));
   await page.getByRole('button',{name:'Refresh',exact:true}).click();

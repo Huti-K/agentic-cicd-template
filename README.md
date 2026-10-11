@@ -1,54 +1,56 @@
-# Relay · Your work, connected
+# Relay · Support to shipped
 
 [![CI](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/ci.yml/badge.svg)](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/ci.yml)
 [![Codex review](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/agent-review.yml/badge.svg)](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/agent-review.yml)
 
-**A ticket workspace with fictional teams, interactive delivery flows, and a live GitHub connection.**
+**A ticket workspace where a customer conversation becomes a reviewed, demonstrated, deployed improvement.**
 
-Relay is the main project in this agentic CI/CD learning repository. Organize tickets across four sample projects, inspect linked PRs, resolve a simulated agent finding, and follow real GitHub work from the same app.
+Relay combines a browser interface, a Cloudflare Worker with D1 storage, and GitHub Actions agents. Anyone can view the workspace. Maintainers sign in to create tickets, run agents, leave feedback, and approve a specific pull request revision for merging.
 
-[**Open Relay**](https://huti-k.github.io/agentic-cicd-template/) · [Live GitHub workspace](https://huti-k.github.io/agentic-cicd-template/#github) · [Explore the pipeline](https://huti-k.github.io/agentic-cicd-template/pipeline.html) · [Report a bug](https://github.com/Huti-K/agentic-cicd-template/issues/new?template=bug.yml)
-
-Pages serves the latest successful deployment from main. An unmerged feature branch is available locally or as a CI build artifact; it does not replace the public site.
+[**Open Relay**](https://relay-agent-platform.oktami.workers.dev) · [Support inbox](https://relay-agent-platform.oktami.workers.dev/inbox.html) · [GitHub repository](https://github.com/Huti-K/agentic-cicd-template)
 
 ## The product
 
-| View | What works |
+| View | What it does |
 | --- | --- |
-| Overview | Derived totals, priority inbox, pending reviews, project progress and activity |
-| Tickets | Board/list views, combined filters, search, creation/editing, assignment, due dates, status changes and desktop drag/drop |
-| Pull requests | Linked tickets, checks, actionable sample agent findings, fixes, reruns and guarded merges |
-| Projects and activity | Four fictional projects with progress and an event history for workspace actions |
-| GitHub | Real public issues, PRs, head-commit checks/statuses, reviews, agent conversation comments and workflow runs |
-| Delivery lab | Actual Actions runs and the deployed build's commit manifest |
+| Overview | Current tickets, review queue, active agents, and deployed revision |
+| Tickets | Search and filters; a full ticket view with description, tags, assignment, contributors, and discussion |
+| Implementation brief | AI triage summary, acceptance criteria, relevant code, and documentation |
+| Agent workflow | Real queued/running/completed/failed jobs with GitHub Actions links |
+| Pull request and evidence | Current revision, actual checks, independent review, changed files, reports, and test recording artifacts |
+| Support inbox | A fictional incoming email creates a real ticket and starts triage; no email is sent |
+| Local playground | The previous fictional multi-project demo, preserved at `/showcase.html` |
 
-Sample edits persist in this browser. Invalid saved data recovers to the initial sample workspace; unavailable storage falls back to the current session. Reset requires confirmation and affects only sample data.
+## From request to release
 
-Sample checks and agent reviews are simulations. A merge requires passing checks and an approved review; applying a fix invalidates both. The merge completes its linked ticket.
+1. **Create a ticket** with a useful description, priority, tags, assignee, and contributors. Or simulate an incoming customer email in **Support inbox**.
+2. **Mention a teammate** with `@` in the discussion. Recognized mentions add that person as a ticket contributor; they do not grant repository permissions.
+3. **Mention `@ai`** to start a GitHub Actions triage run. The agent refines the description, identifies relevant files and documentation, and writes acceptance criteria.
+4. **Start implementation** when the brief is ready. A separate agent proposes a change and attaches a real pull request to the ticket.
+5. **Generate evidence** for the current PR revision. A separate agent writes end-to-end tests; another runner executes them. Open the resulting GitHub artifacts to inspect reports and available recordings.
+6. **Review the result.** Leave a **Feedback** comment to request another implementation pass. Use **Switch to human editing** to pause agent work and make manual changes, then **Resume agents** when ready.
+7. **Approve and merge** a specific revision once its checks, independent review, and evidence are ready. The server checks these conditions again immediately before merging.
+8. **Follow deployment.** Successful main-branch CI deploys the platform to Cloudflare and verifies the deployed commit. A ticket becomes deployed only when its merged change is included in that deployment.
 
-## GitHub connection
+A mention on a ticket with an existing PR requests an implementation revision. Human editing pauses automatic comment-triggered work. Failed runs and unavailable GitHub data remain visible; Relay does not invent passing checks, completed jobs, or test recordings.
 
-The **GitHub** view defaults to this repository and accepts any public `owner/repository` or GitHub repository URL. It fetches public data directly using credential-free GET requests. **Refresh** retrieves newer changes. The selected repository is remembered locally.
+[Platform walkthrough and troubleshooting](docs/PLATFORM-GUIDE.md) · [Architecture](docs/ARCHITECTURE.md) · [Testing](docs/TESTING.md) · [API contract](docs/PLATFORM-CONTRACT.md)
 
-Writes happen on GitHub: create or edit issues, discuss/review PRs, and merge using the provided links. **Draft on GitHub** prepares an issue from a sample ticket; you review and submit it on GitHub. Sample actions never modify a repository.
+## Access and credentials
 
-No PAT, OAuth secret, or API key belongs in browser code or local storage. Private repositories and editing GitHub directly inside Relay would require a separate authenticated backend. This Pages version supports public repositories.
+The platform is **public to view, maintainer-only to change**. Maintainer sign-in uses a server-managed session cookie and CSRF protection. Sign out when finished on a shared computer.
 
-Responses are cached in memory for one minute. Lists show recent records (up to 100 per issue/PR endpoint and 20 workflow runs); PR details show up to 100 entries per category. Rate limits and outages are explicit. A failed refresh retains the last successful snapshot with a stale-data notice. See the [GitHub REST rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+GitHub, OpenAI, deployment, and callback credentials belong in Cloudflare or GitHub Actions secrets. They are never embedded in browser assets, saved in browser local storage, or sent to candidate application/test execution jobs. A contributor name is a workspace identity, not a GitHub permission grant.
 
-## Run locally
+The agent jobs use the OpenAI API and can incur costs. Runtime and concurrency limits bound individual runs; configure API project budgets separately.
 
-Requires Node.js 22+. The browser application has no runtime dependencies; Playwright and YAML are pinned development tools.
+## Develop and verify
+
+Requires Node.js 22+. Browser code has no JavaScript runtime dependencies. Wrangler, Playwright, and YAML are pinned development tools.
 
 ```sh
 npm ci --ignore-scripts
 npm run check
-npm run dev
-```
-
-Open http://127.0.0.1:4173 for Relay or http://127.0.0.1:4173/pipeline.html for the delivery lab.
-
-```sh
 npx playwright install chromium
 npm run test:browser
 npm run tools:install
@@ -56,60 +58,39 @@ npm run lint:workflows
 npm run scan:secrets
 ```
 
-Browser tests use the build produced by `npm run check`. Tools support Linux/macOS and are checked against committed SHA-256 digests. The secret scan covers fetched Git history; it cannot establish that a credential was never exposed elsewhere.
+`npm run check` runs syntax validation, Node tests, and the static build. Browser tests exercise desktop and mobile against test-only API fixtures. Backend integration tests use isolated temporary databases and mock GitHub responses; they do not create real issues, paid runs, or merges.
 
-[Testing and showcase walkthrough](docs/TESTING.md) covers the product flow, tests, historical agent PRs, and new issue demonstrations.
+The full platform needs the Worker and its D1 binding. Run `npm run dev:platform` to build assets, initialize the local D1 database, and start Wrangler. A static-only preview (`npm run dev`) can serve `/showcase.html` and `/pipeline.html`; it does not provide the authenticated `/api` backend.
 
-## The real automation behind it
+Use the [platform guide](docs/PLATFORM-GUIDE.md) for local setup and operator configuration. A secret scan examines the checked-out and fetched Git history; it is not proof that a key was never exposed elsewhere.
 
-An agent writes a fix. Independent checks prove the behavior. A human decides what ships.
+## Automation boundaries
 
 ```mermaid
 flowchart LR
-  I[Bug report] --> G[Maintainer gate]
-  G --> A[Codex implementation]
-  A --> R[Regression fails on original]
-  R --> T[Checks pass on fix]
-  T --> P[Pull request]
-  P --> C[CI and browser tests]
-  P --> V[Independent AI review]
-  C --> H[Human merge]
-  V --> H
-  H --> D[Tested artifact to Pages]
-  D --> S[Verify deployed commit]
+  E[Demo support email] --> T[Support ticket]
+  T --> A[Triage agent]
+  A --> H[Human starts implementation]
+  H --> I[Implementation agent]
+  I --> P[Linked pull request]
+  P --> C[CI and independent review]
+  P --> V[Evidence agent and isolated browser run]
+  C --> M[Human approves exact revision]
+  V --> M
+  M --> D[Main CI deploys to Cloudflare]
+  D --> T
 ```
 
-| Stage | Evidence |
-| --- | --- |
-| Authorization | Reproduction fields, maintainer permission, duplicate PR protection |
-| Implementation | One bounded attempt; only demo source and demo tests can be published |
-| Regression proof | New assertions fail on original source; import/syntax errors do not count |
-| CI | Node 22/24, desktop/mobile browsers, workflow validation, redacted secret scan |
-| AI review | Verdict, severity, exact source links and actionable findings |
-| Deployment | Tested artifact, build manifest and post-deploy checks |
+- Preparation, AI work, verification, and publication use separate jobs. Candidate code never receives repository write, callback, or deployment credentials.
+- AI changes are restricted to the allowed application and test paths. Evidence generation can only propose agent browser tests.
+- New features need real tests. Bug fixes need regression evidence when existing entry points support reproduction.
+- The publisher validates artifacts before applying changes and does not execute candidate code.
+- Reviews and evidence are tied to a PR head. A new commit requires fresh evidence and review.
+- Stale or duplicate callbacks cannot overwrite newer ticket work. Human editing cancels the ticket's active automation.
+- Merge is an explicit human action. Passing checks alone do not authorize it.
 
-## Configure your own repository
-
-1. Use this template, then add **OPENAI_API_KEY** as an Actions secret. GitHub Actions uses API billing; it does not copy a local ChatGPT login.
-2. Run `bash scripts/setup-github.sh OWNER/REPO --pages` to create labels, enable Actions-created PRs, and configure Pages.
-3. Require **verify** and **AI review** in branch protection, with branches up to date before merging. Keep human merge decisions.
-4. Replace the repository links and the local-development repository fallback in `demo/src/github.js`, `demo/src/pipeline.js` and `scripts/build.mjs`.
-5. Optionally set **CODEX_MODEL** and **CODEX_VERSION** repository variables. An empty value uses the action's default model or current CLI release. Implementation and review use medium reasoning effort.
-
-Implementation has a 15-minute job limit; review has 10 minutes. These are runtime limits, not spending caps. Configure API project budgets separately.
-
-## Operational boundaries
-
-- PR CI has no API secret. Agent tests run on a fresh runner without write credentials.
-- The publisher applies an allowlisted patch and never executes candidate demo code or tests.
-- Review reads the exact PR diff against trusted base source; it never executes candidate code. Closed PRs or changed heads/bases discard the result.
-- Draft PRs and Dependabot events don't start automatic paid reviews. A maintainer can dispatch review for a ready Dependabot PR. Fork PRs receive CI but require a separate trusted review process.
-- Actions use immutable commit pins. Dependabot groups Actions and development dependency updates.
-- Only a successful main-branch build can deploy. Failed, skipped, or cancelled required CI jobs fail the stable `verify` gate.
-- AI errors and malformed results fail closed. There is no automatic merge or recursive repair loop.
-
-[Architecture and troubleshooting](docs/ARCHITECTURE.md) explains the trust boundaries and recovery steps. The official [Codex GitHub Action documentation](https://learn.chatgpt.com/docs/github-action) describes the integration.
+The earlier issue-label workflow and local playground remain available for historical demonstrations. [PR #12](https://github.com/Huti-K/agentic-cicd-template/pull/12) is an intentionally bad, unmerged example against the previous Stockroom application; do not merge it into Relay.
 
 ## Attribution
 
-Adapted from [whyisjake/agentic-deployment-template](https://github.com/whyisjake/agentic-deployment-template), revision `4e230e5370a34ed7abfd4bb7134db5d6c073a2b9`. This version retains the structured issue and maintainer-gated execution approach, replaces the Claude-specific workflows with Codex jobs, and adds the demo, independent verification, review, CI, and Pages deployment. The upstream MIT license is retained; see [LICENSE](LICENSE).
+Adapted from [whyisjake/agentic-deployment-template](https://github.com/whyisjake/agentic-deployment-template), revision `4e230e5370a34ed7abfd4bb7134db5d6c073a2b9`. The upstream MIT license is retained; see [LICENSE](LICENSE). Locally served DM Sans and Manrope fonts retain their SIL Open Font License files in [`demo/fonts`](demo/fonts).
