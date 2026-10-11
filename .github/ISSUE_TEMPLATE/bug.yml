@@ -17,7 +17,7 @@ body:
     id: reproduce
     attributes:
       label: Steps to reproduce
-      placeholder: "1. Open the demo\n2. Enter a barcode\n3. Click Look up"
+      placeholder: "1. Open the demo\n2. Open a ticket with a linked pull request\n3. Change its status"
     validations:
       required: true
   - type: textarea
@@ -30,7 +30,7 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
-      placeholder: "- [ ] The reported scan finds the correct product\n- [ ] Add a regression test\n- [ ] npm run check passes"
+      placeholder: "- [ ] The reported ticket operation preserves the expected state\n- [ ] Add a regression test\n- [ ] npm run check passes"
     validations:
       required: true
   - type: textarea

@@ -1,3 +1,5 @@
+> Historical fixture for the previous Stockroom app at revision `e902feb`. This is not a current Relay bug.
+
 ### What happened
 
 The thermal label roll is listed in inventory with barcode `0123456789012`, but scanning that exact barcode returns “Product not found.”

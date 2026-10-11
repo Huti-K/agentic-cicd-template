@@ -3,21 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A hands-on barcode inventory demo for testing an issue-to-PR Codex workflow.">
-  <title>Stockroom · Huti's agentic CI/CD lab</title>
+  <meta name="theme-color" content="#191d23">
+  <meta name="description" content="Relay brings tickets, projects, pull requests and agent reviews into one workspace. Explore the sample team or connect a public GitHub repository.">
+  <title>Relay · Your work, connected</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <script type="module" src="./src/app.js"></script>
 </head>
 <body>
-  <main>
-    <header><a class="brand" href="./">▥ STOCKROOM</a><span class="pill">HUTI / CI/CD LAB</span></header>
-    <section class="intro"><p class="eyebrow">FROM BUG REPORT TO DEPLOYMENT</p><h1>Small inventory.<br>Real engineering workflow.</h1><p class="subtitle">Scan a product, check its stock, and put your coding agent to the test.</p></section>
-    <div class="layout">
-      <section class="card scan"><p class="eyebrow">01 / SCAN</p><h2>Find a product</h2><form id="scan-form"><label for="barcode">Product barcode</label><div class="input-row"><input id="barcode" name="barcode" inputmode="numeric" autocomplete="off" placeholder="4006381333931" required><button type="submit">Look up ↗</button></div></form><p id="status" role="status" aria-live="polite">Ready when you are.</p><div id="adjustments" hidden><p id="selected-name"></p><button type="button" data-change="-1">− Ship one</button> <button type="button" data-change="1">+ Receive one</button></div><p class="small">Try a sample</p><div class="samples"><button type="button" data-scan="4006381333931">Scanner</button><button type="button" data-scan="0123456789012">Label roll</button><button type="button" data-scan="5901234123457">Carton</button></div></section>
-      <aside class="card lab"><p class="eyebrow">02 / EXPERIMENT</p><h2>Something doesn't scan?</h2><p>This demo starts with an intentional bug. One product exists in the inventory but cannot be found by its barcode.</p><ol><li>Reproduce the problem.</li><li>Open a bug report in the repository.</li><li>Add <code>agent-ready</code> as a maintainer.</li><li>Inspect the fix, tests, and AI review.</li></ol><p class="small">Changes live in this tab only. Refreshing resets the stock.</p></aside>
-    </div>
-    <section class="card stock"><div class="stock-heading"><div><p class="eyebrow">LIVE INVENTORY</p><h2><span id="product-count">3</span> products <span class="muted">/ <span id="unit-count">152</span> units</span></h2></div><button class="quiet" id="reset" type="button">Reset inventory</button></div><div class="table-scroll"><table><thead><tr><th>Product</th><th>Barcode</th><th>Location</th><th>In stock</th></tr></thead><tbody id="inventory"></tbody></table></div></section>
-    <footer><span>Built to learn. Designed to inspect.</span><span>Issue → Codex → CI → AI review → human merge</span></footer>
-  </main>
+  <a class="skip-link" href="#workspace-content">Skip to workspace</a>
+  <button id="sidebar-overlay" class="sidebar-overlay" aria-label="Close navigation" hidden></button>
+  <aside class="sidebar" id="sidebar" aria-label="Workspace navigation"></aside>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="icon-button mobile-menu" id="menu-button" aria-label="Open navigation" aria-expanded="false">☰</button>
+      <div class="breadcrumb"><span>Workspace</span><span class="breadcrumb-divider">/</span><strong id="view-title">Overview</strong></div>
+      <div class="topbar-actions">
+        <label class="global-search"><span aria-hidden="true">⌕</span><input id="global-search" type="search" placeholder="Search tickets…" aria-label="Search tickets" maxlength="120"><kbd>/</kbd></label>
+        <button id="new-ticket" class="button primary"><span aria-hidden="true">＋</span> New ticket</button>
+        <span class="avatar violet self-avatar" title="Alex Morgan · Sample account">AM</span>
+      </div>
+    </header>
+    <main id="workspace-content" tabindex="-1"></main>
+    <footer class="app-footer"><span>Built for the work between idea and shipped.</span><a href="./pipeline.html">Explore the real CI/CD pipeline ↗</a></footer>
+  </div>
+  <dialog id="ticket-detail" class="drawer" aria-label="Ticket details"></dialog>
+  <dialog id="pr-detail" class="drawer" aria-label="Pull request details"></dialog>
+  <dialog id="github-detail" class="drawer" aria-label="GitHub details"></dialog>
+  <dialog id="ticket-form-dialog" class="modal" aria-label="Ticket form"></dialog>
+  <dialog id="reset-dialog" class="modal compact" aria-label="Reset sample workspace">
+    <h2>Start with a clean slate?</h2><p>This replaces your locally saved sample tickets, PRs and activity with the original fictional workspace. GitHub is unaffected.</p>
+    <div class="dialog-actions"><button class="button" id="cancel-reset">Keep my changes</button><button class="button danger" id="confirm-reset">Reset sample data</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

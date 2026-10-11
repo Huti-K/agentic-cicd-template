@@ -1,66 +1,115 @@
-# Huti's agentic CI/CD lab
+# Relay · Your work, connected
 
 [![CI](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/ci.yml/badge.svg)](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/ci.yml)
+[![Codex review](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/agent-review.yml/badge.svg)](https://github.com/Huti-K/agentic-cicd-template/actions/workflows/agent-review.yml)
 
-A public template for **bug report → Codex fix → regression test → pull request → independent Codex review → human merge → deployment**.
+**A ticket workspace with fictional teams, interactive delivery flows, and a live GitHub connection.**
 
-The included Stockroom demo is a small barcode inventory app. It deliberately starts with a leading-zero lookup bug so you can test the entire workflow on a real failure.
+Relay is the main project in this agentic CI/CD learning repository. Organize tickets across four sample projects, inspect linked PRs, resolve a simulated agent finding, and follow real GitHub work from the same app.
 
-- [Open the demo](https://huti-k.github.io/agentic-cicd-template/)
-- [Report a bug](https://github.com/Huti-K/agentic-cicd-template/issues/new?template=bug.yml)
-- [Watch the workflows](https://github.com/Huti-K/agentic-cicd-template/actions)
+[**Open Relay**](https://huti-k.github.io/agentic-cicd-template/) · [Live GitHub workspace](https://huti-k.github.io/agentic-cicd-template/#github) · [Explore the pipeline](https://huti-k.github.io/agentic-cicd-template/pipeline.html) · [Report a bug](https://github.com/Huti-K/agentic-cicd-template/issues/new?template=bug.yml)
+
+Pages serves the latest successful deployment from main. An unmerged feature branch is available locally or as a CI build artifact; it does not replace the public site.
+
+## The product
+
+| View | What works |
+| --- | --- |
+| Overview | Derived totals, priority inbox, pending reviews, project progress and activity |
+| Tickets | Board/list views, combined filters, search, creation/editing, assignment, due dates, status changes and desktop drag/drop |
+| Pull requests | Linked tickets, checks, actionable sample agent findings, fixes, reruns and guarded merges |
+| Projects and activity | Four fictional projects with progress and an event history for workspace actions |
+| GitHub | Real public issues, PRs, head-commit checks/statuses, reviews, agent conversation comments and workflow runs |
+| Delivery lab | Actual Actions runs and the deployed build's commit manifest |
+
+Sample edits persist in this browser. Invalid saved data recovers to the initial sample workspace; unavailable storage falls back to the current session. Reset requires confirmation and affects only sample data.
+
+Sample checks and agent reviews are simulations. A merge requires passing checks and an approved review; applying a fix invalidates both. The merge completes its linked ticket.
+
+## GitHub connection
+
+The **GitHub** view defaults to this repository and accepts any public `owner/repository` or GitHub repository URL. It fetches public data directly using credential-free GET requests. **Refresh** retrieves newer changes. The selected repository is remembered locally.
+
+Writes happen on GitHub: create or edit issues, discuss/review PRs, and merge using the provided links. **Draft on GitHub** prepares an issue from a sample ticket; you review and submit it on GitHub. Sample actions never modify a repository.
+
+No PAT, OAuth secret, or API key belongs in browser code or local storage. Private repositories and editing GitHub directly inside Relay would require a separate authenticated backend. This Pages version supports public repositories.
+
+Responses are cached in memory for one minute. Lists show recent records (up to 100 per issue/PR endpoint and 20 workflow runs); PR details show up to 100 entries per category. Rate limits and outages are explicit. A failed refresh retains the last successful snapshot with a stale-data notice. See the [GitHub REST rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
 
 ## Run locally
 
-Requires Node.js 22+. There are no application or npm dependencies.
+Requires Node.js 22+. The browser application has no runtime dependencies; Playwright and YAML are pinned development tools.
 
 ```sh
+npm ci --ignore-scripts
 npm run check
 npm run dev
 ```
 
-Open http://127.0.0.1:4173. Click **Scanner** to see a successful lookup, then **Label roll** to reproduce the starter bug. Stock is kept in memory and resets on refresh.
+Open http://127.0.0.1:4173 for Relay or http://127.0.0.1:4173/pipeline.html for the delivery lab.
 
-## Try the full workflow
+```sh
+npx playwright install chromium
+npm run test:browser
+npm run tools:install
+npm run lint:workflows
+npm run scan:secrets
+```
 
-1. Open a bug report using the form. Include reproduction steps, expected behavior, and testable acceptance criteria. A ready-to-use report is in [docs/sample-bug.md](docs/sample-bug.md).
-2. A maintainer adds **agent-ready**. This starts **Codex issue fix**. Alternatively, run that workflow manually with the issue number.
-3. Codex works in a runner with repository read permissions. Its patch is limited to `demo/` and `tests/demo/`.
-4. A fresh runner validates the patch and runs `npm run check`. Only then does a separate publishing job open a PR.
-5. The publisher explicitly starts CI and **Codex independent review**. This avoids GitHub's suppression of automatic workflow triggers for PRs created with `GITHUB_TOKEN`.
-6. Inspect the tests and AI review, then merge the PR yourself. Main-branch CI deploys the demo to GitHub Pages when Pages is enabled.
+Browser tests use the build produced by `npm run check`. Tools support Linux/macOS and are checked against committed SHA-256 digests. The secret scan covers fetched Git history; it cannot establish that a credential was never exposed elsewhere.
 
-AI findings do not trigger an unlimited repair loop. Edit the PR or address findings locally, push the changes, and review again. The manual review workflow accepts a PR number. A changed PR head invalidates older review results.
+[Testing and showcase walkthrough](docs/TESTING.md) covers the product flow, tests, historical agent PRs, and new issue demonstrations.
 
-## Use this template
+## The real automation behind it
 
-Click **Use this template** on GitHub, create your repository, and clone it. Then:
+An agent writes a fix. Independent checks prove the behavior. A human decides what ships.
 
-1. Save an OpenAI API key as the Actions secret **OPENAI_API_KEY** in your repository settings. GitHub Actions uses API billing; a local ChatGPT login is not copied to runners. Do not commit credentials.
-2. Run `bash scripts/setup-github.sh OWNER/REPO`. It creates the labels and enables Actions-created PRs.
-3. Optional: run `bash scripts/setup-github.sh OWNER/REPO --pages` to also enable GitHub Pages deployment.
-4. Replace the repository URLs in this README with your own.
-5. Set a repository variable **CODEX_MODEL** if you want an explicit model. Otherwise the Codex CLI selects its default. Both implementation and review use medium reasoning effort.
-6. In Settings → Branches, require the **verify** and **AI review** checks before merging. For a solo-owned repository you can merge your own PR after checking the evidence; AI comments do not count as human approvals.
+```mermaid
+flowchart LR
+  I[Bug report] --> G[Maintainer gate]
+  G --> A[Codex implementation]
+  A --> R[Regression fails on original]
+  R --> T[Checks pass on fix]
+  T --> P[Pull request]
+  P --> C[CI and browser tests]
+  P --> V[Independent AI review]
+  C --> H[Human merge]
+  V --> H
+  H --> D[Tested artifact to Pages]
+  D --> S[Verify deployed commit]
+```
 
-Actions are pinned to commit SHAs, with weekly Dependabot updates grouped into one PR. Dependabot events do not receive Actions secrets, so a maintainer must dispatch AI review manually for those PRs. Codex CLI itself follows the action's default version unless you pin `codex-version` in both agent workflows.
+| Stage | Evidence |
+| --- | --- |
+| Authorization | Reproduction fields, maintainer permission, duplicate PR protection |
+| Implementation | One bounded attempt; only demo source and demo tests can be published |
+| Regression proof | New assertions fail on original source; import/syntax errors do not count |
+| CI | Node 22/24, desktop/mobile browsers, workflow validation, redacted secret scan |
+| AI review | Verdict, severity, exact source links and actionable findings |
+| Deployment | Tested artifact, build manifest and post-deploy checks |
 
-## What runs where
+## Configure your own repository
 
-| Workflow | Trigger | What it does |
-| --- | --- | --- |
-| CI | PR, push to main, manual dispatch | Syntax checks, Node tests, static build; deploys main when enabled |
-| Codex issue fix | Maintainer adds `agent-ready`, or manual dispatch | Validate report, generate patch, independently test, publish PR |
-| Codex independent review | Same-repo PR or explicit dispatch | Review exact diff from trusted base code; publish findings and `AI review` status |
+1. Use this template, then add **OPENAI_API_KEY** as an Actions secret. GitHub Actions uses API billing; it does not copy a local ChatGPT login.
+2. Run `bash scripts/setup-github.sh OWNER/REPO --pages` to create labels, enable Actions-created PRs, and configure Pages.
+3. Require **verify** and **AI review** in branch protection, with branches up to date before merging. Keep human merge decisions.
+4. Replace the repository links and the local-development repository fallback in `demo/src/github.js`, `demo/src/pipeline.js` and `scripts/build.mjs`.
+5. Optionally set **CODEX_MODEL** and **CODEX_VERSION** repository variables. An empty value uses the action's default model or current CLI release. Implementation and review use medium reasoning effort.
 
-Implementation times out after 15 minutes; review after 10. These are runtime limits, not dollar caps. Use API project budget controls and monitor usage for your account.
+Implementation has a 15-minute job limit; review has 10 minutes. These are runtime limits, not spending caps. Configure API project budgets separately.
 
-Fork PRs still get ordinary CI but never the API secret or automatic AI review. The paid agent only accepts a maintainer-authorized issue. Candidate code is tested without secrets; the publisher never executes that code. Publication rejects changes outside the demo and its tests, binaries, symlinks, executable files, and patches above 200 KB.
+## Operational boundaries
 
-See [Testing](docs/TESTING.md) for the experiment and [Architecture](docs/ARCHITECTURE.md) for boundaries and troubleshooting.
+- PR CI has no API secret. Agent tests run on a fresh runner without write credentials.
+- The publisher applies an allowlisted patch and never executes candidate demo code or tests.
+- Review reads the exact PR diff against trusted base source; it never executes candidate code. Closed PRs or changed heads/bases discard the result.
+- Draft PRs and Dependabot events don't start automatic paid reviews. A maintainer can dispatch review for a ready Dependabot PR. Fork PRs receive CI but require a separate trusted review process.
+- Actions use immutable commit pins. Dependabot groups Actions and development dependency updates.
+- Only a successful main-branch build can deploy. Failed, skipped, or cancelled required CI jobs fail the stable `verify` gate.
+- AI errors and malformed results fail closed. There is no automatic merge or recursive repair loop.
+
+[Architecture and troubleshooting](docs/ARCHITECTURE.md) explains the trust boundaries and recovery steps. The official [Codex GitHub Action documentation](https://learn.chatgpt.com/docs/github-action) describes the integration.
 
 ## Attribution
 
-Adapted from [whyisjake/agentic-deployment-template](https://github.com/whyisjake/agentic-deployment-template), revision `4e230e5370a34ed7abfd4bb7134db5d6c073a2b9`. This version retains the structured issue and maintainer-gated execution approach, replaces the Claude-specific workflows with Codex jobs, and adds the demo, patch validation, independent review, CI, and Pages deployment. The upstream MIT license is retained; see [LICENSE](LICENSE).
-
-Built with the official [Codex GitHub Action](https://learn.chatgpt.com/docs/github-action).
+Adapted from [whyisjake/agentic-deployment-template](https://github.com/whyisjake/agentic-deployment-template), revision `4e230e5370a34ed7abfd4bb7134db5d6c073a2b9`. This version retains the structured issue and maintainer-gated execution approach, replaces the Claude-specific workflows with Codex jobs, and adds the demo, independent verification, review, CI, and Pages deployment. The upstream MIT license is retained; see [LICENSE](LICENSE).

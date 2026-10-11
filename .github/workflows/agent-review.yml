@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   prepare:
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -28,14 +28,14 @@ jobs:
       base: ${{ steps.pr.outputs.base }}
       metadata: ${{ steps.pr.outputs.metadata }}
     steps:
-      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         id: pr
         with:
           script: |
             const number = Number(context.payload.pull_request?.number ?? context.payload.inputs?.pr_number);
             if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
-            if (pr.state !== 'open' || pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) throw new Error('Only open, same-repository PRs may use the API secret.');
+            if (pr.draft || pr.state !== 'open' || pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) throw new Error('Only open, same-repository PRs may use the API secret.');
             core.setOutput('number', String(number));
             core.setOutput('head', pr.head.sha);
             core.setOutput('base', pr.base.sha);
@@ -50,7 +50,7 @@ jobs:
     outputs:
       result: ${{ steps.codex.outputs.final-message }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.base }}
           fetch-depth: 0
@@ -65,6 +65,7 @@ jobs:
           test "$(git rev-parse refs/remotes/origin/review-head)" = "$EXPECTED_HEAD"
           mkdir -p .agent-output
           git diff HEAD...refs/remotes/origin/review-head > .agent-output/change.diff
+          test "$(wc -c < .agent-output/change.diff)" -le 500000
           node -e "require('fs').writeFileSync('.agent-output/pr.json', process.env.PR_JSON)"
       - name: Check credential configuration
         env:
@@ -85,6 +86,7 @@ jobs:
           safety-strategy: drop-sudo
           model: ${{ vars.CODEX_MODEL }}
           effort: medium
+          codex-version: ${{ vars.CODEX_VERSION }}
           allow-bots: true
   report:
     if: always() && needs.prepare.result == 'success'
@@ -96,29 +98,74 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RESULT: ${{ needs.review.outputs.result }}
           REVIEW_JOB: ${{ needs.review.result }}
           PR_NUMBER: ${{ needs.prepare.outputs.number }}
           REVIEWED_HEAD: ${{ needs.prepare.outputs.head }}
+          REVIEWED_BASE: ${{ needs.prepare.outputs.base }}
         with:
           script: |
             const number = Number(process.env.PR_NUMBER);
             const head = process.env.REVIEWED_HEAD;
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
-            if (pr.head.sha !== head) { core.notice('PR changed; discarding stale review.'); return; }
+            if (pr.state !== 'open' || pr.head.sha !== head) {
+              core.notice('PR closed or its head changed; discarding stale review.');
+              return;
+            }
+            if (pr.base.sha !== process.env.REVIEWED_BASE) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo, sha: head, state: 'error', context: 'AI review',
+                target_url: context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId,
+                description: 'Base changed during review; rerun independent review for this PR'
+              });
+              core.setFailed('The base branch advanced during review. Rerun Codex independent review for this PR against the current base.');
+              return;
+            }
+            const safeText = (value) => String(value).replace(/\s+/g, ' ').trim()
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/([\\\x60*_{}\[\]()#+.!|~>-])/g, '\\$1').replace(/@/g, '@\u200b');
+            const validText = (text, max) => typeof text === 'string' && text.trim().length > 0 && text.length <= max;
+            const validPath = (path) => validText(path, 260) && !/[\x00-\x1f\\]/.test(path)
+              && path.split('/').every(part => part && part !== '.' && part !== '..');
+            const repositoryUrl = context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo;
+            const url = repositoryUrl + '/actions/runs/' + context.runId;
             let state = 'error';
-            let body = 'Codex review did not complete. Check the workflow logs and rerun after resolving the failure.';
+            let body = '### ⛔ REVIEW INCOMPLETE\n\nCodex did not complete the review. Inspect the run and retry; this is not an approval.';
             if (process.env.REVIEW_JOB === 'success') {
               try {
                 const result = JSON.parse(process.env.RESULT);
-                if (!['pass', 'needs_changes'].includes(result.verdict) || typeof result.summary !== 'string' || !Array.isArray(result.findings)) throw new Error('Invalid review format');
-                state = result.verdict === 'pass' && result.findings.length === 0 ? 'success' : 'failure';
-                body = result.summary + '\n\n' + result.findings.map(f => `- **${f.severity}** — ${f.path}:${f.line}: ${f.description}`).join('\n');
-              } catch { body = 'Codex returned an invalid review result. Inspect the workflow and rerun; this is not a passing review.'; }
+                if (!result || !['pass', 'needs_changes'].includes(result.verdict) || !validText(result.summary, 1200)
+                  || !Array.isArray(result.findings) || result.findings.length > 10
+                  || result.findings.some(f => !f || !['P1', 'P2'].includes(f.severity) || !validPath(f.path)
+                    || !Number.isSafeInteger(f.line) || f.line < 1 || !validText(f.description, 1200))) throw new Error('Invalid review format');
+                if ((result.verdict === 'pass') !== (result.findings.length === 0)) throw new Error('Verdict and findings disagree');
+                const passed = result.verdict === 'pass';
+                state = passed ? 'success' : 'failure';
+                const findings = result.findings.map(f => {
+                  const path = f.path.split('/').map(part => encodeURIComponent(part).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16))).join('/');
+                  const source = repositoryUrl + '/blob/' + head + '/' + path + '#L' + f.line;
+                  return '- **' + f.severity + '** · [' + safeText(f.path) + ':' + f.line + '](' + source + ') — ' + safeText(f.description);
+                }).join('\n') || '_No actionable findings._';
+                body = [
+                  '### ' + (passed ? '✅ PASS' : '⚠️ CHANGES REQUESTED'), '',
+                  safeText(result.summary), '', '### Findings', '', findings, '',
+                  '_The reviewer inspected source without executing candidate code. CI runs tests separately._'
+                ].join('\n');
+              } catch {
+                body = '### ⛔ INVALID REVIEW\n\nThe result failed validation. Inspect the run and retry; this is not an approval.';
+              }
             }
-            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.pulls.createReview({ ...context.repo, pull_number: number, commit_id: head, event: 'COMMENT', body: (`## Independent Codex review\n\n${body}\n\nReviewed commit: ${head}\n[Review run](${url})\n\nAI feedback supports the human merge decision.`).slice(0,60000) });
-            await github.rest.repos.createCommitStatus({ ...context.repo, sha: head, state, context: 'AI review', target_url: url, description: state === 'success' ? 'No actionable defects reported' : 'Review needs attention; inspect the report' });
+            const fullBody = [
+              '## Independent Codex review', '', body, '',
+              '**Reviewed commit:** <code>' + head + '</code>', '[Review run](' + url + ')', '',
+              'AI feedback supports the human merge decision.'
+            ].join('\n');
+            await github.rest.pulls.createReview({ ...context.repo, pull_number: number, commit_id: head, event: 'COMMENT', body: fullBody });
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: head, state, context: 'AI review', target_url: url,
+              description: state === 'success' ? 'No actionable defects reported' : 'Review needs attention; inspect the report'
+            });
+            await core.summary.addRaw(fullBody).write();
             if (state !== 'success') core.setFailed('AI review did not pass.');
