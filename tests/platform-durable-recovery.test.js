@@ -327,6 +327,35 @@ test('triage description changes require reimplementation of an existing PR', as
   assert.equal((await store.job(implementing.data.jobs[0].id)).requestRevision, 1);
 });
 
+test('triage acceptance criteria changes require implementation even when the description is unchanged', async context => {
+  const { api, store, ticket: original } = await review(context, { description: triage.description, triage });
+  const previousEvidence = await store.createJob(original, 'evidence', BASE_SHA);
+  await store.updateJob(previousEvidence, { status: 'succeeded', headSha: PR_SHA, evidence: [{ kind: 'video' }] });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+  const updated = { ...triage, summary: 'Updated supporting context.', files: [{ path: 'demo/index.html', reason: 'Ticket interface' }] };
+  for (const [criteria, revision] of [[triage.acceptanceCriteria, 0], [['Retrying an email creates one ticket.', 'Keyboard focus remains in the composer.'], 1]]) {
+    const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+    assert.equal(started.status, 200);
+    assert.equal((await api.callback(started.data.ticket.activeJobId, { status: 'succeeded', runId: 456, triage: { ...updated, acceptanceCriteria: criteria } })).status, 200);
+    assert.equal((await store.ticket('RLY-1')).requestRevision || 0, revision);
+  }
+  assert.equal((await store.ticket('RLY-1')).description, original.description);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).data.code, 'request_changed');
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'resume' } });
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).data.code, 'request_changed');
+  assert.equal(api.github.mergeCalls, 0);
+  const implementing = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal(implementing.status, 200);
+  assert.equal((await api.callback(implementing.data.ticket.activeJobId, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  const current = await api.request('/api/tickets/RLY-1');
+  assert.equal(current.data.ticket.implementedRequestRevision, 1);
+  assert.equal(current.data.pullRequest.canMerge, false, 'fresh implementation still requires new evidence');
+  const evidence = [{ kind: 'artifact', title: 'Updated criteria verified', url: `https://github.com/${REPO}/actions/runs/456/artifacts/789`, headSha: PR_SHA }];
+  assert.equal((await api.callback(current.data.ticket.activeJobId, { status: 'succeeded', runId: 456, headSha: PR_SHA, evidence })).status, 200);
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+});
+
 test('failed feedback implementation keeps the request unfulfilled without an automatic retry loop', async context => {
   const { api, store, ticket: original } = await review(context);
   const evidence = await store.createJob(original, 'evidence', BASE_SHA);
