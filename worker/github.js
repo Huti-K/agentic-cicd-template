@@ -1,6 +1,6 @@
 import { assert, HttpError, SHA, allowedAgentPath } from './model.js';
 export class GitHub {
-  constructor(env,fetcher=fetch){this.env=env;this.fetcher=fetcher;this.repository=env.GITHUB_REPOSITORY||'Huti-K/agentic-cicd-template';}
+  constructor(env,fetcher=fetch){this.env=env;this.fetcher=fetcher.bind(globalThis);this.repository=env.GITHUB_REPOSITORY||'Huti-K/agentic-cicd-template';}
   async call(path,{method='GET',body}={}) {
     assert(this.env.GITHUB_TOKEN,'GitHub integration is not configured.',503,'integration_unavailable');
     const response=await this.fetcher('https://api.github.com/repos/'+this.repository+path,{

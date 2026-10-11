@@ -10,6 +10,14 @@ function client() {
   return { fixture, github, evidence };
 }
 
+test('GitHub fetch preserves the Worker global receiver', async () => {
+  const github = new GitHub({ GITHUB_TOKEN: 'fixture-token' }, function () {
+    assert.equal(this, globalThis, 'Worker fetch requires the global receiver');
+    return Promise.resolve(new Response(JSON.stringify({ sha: BASE_SHA })));
+  });
+  assert.equal(await github.base(), BASE_SHA);
+});
+
 test('merge readiness requires both verification and independent review on the current revision', async () => {
   const { fixture, github, evidence } = client();
   assert.equal((await github.pull(71, [evidence])).canMerge, true);
