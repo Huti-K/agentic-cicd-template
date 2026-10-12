@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "node scripts/serve.mjs",
+    "dev:platform": "npm run build && wrangler d1 migrations apply DB --local && wrangler dev",
     "lint": "node scripts/lint.mjs",
     "test": "node scripts/test.mjs",
     "test:browser": "playwright test",

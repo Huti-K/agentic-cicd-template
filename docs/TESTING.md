@@ -1,17 +1,16 @@
 # Testing and showcasing Relay
 
-## Walk through the product
+## Walk through the platform
 
-1. Start on **Overview**. Totals, priority tickets, project progress and activity are derived from the sample workspace.
-2. Open **Tickets**. Switch between board and list, search, and combine project/status/priority filters.
-3. Create a ticket, assign it, edit it, and change its status. Reload to confirm the locally saved changes.
-4. Open **Pull requests → Reconcile saved trips after reconnecting**. The sample PR has failed checks. Run the agent review to see an actionable finding.
-5. Apply the suggested fix. Both checks and review become pending. Rerun each, then merge the sample PR. Only its linked ticket is completed.
-6. Open **GitHub**. The default public repository is `Huti-K/agentic-cicd-template`; another public `owner/repository` can be connected. Inspect real issues, PR checks, agent comments, and workflow runs.
-7. Use **Draft on GitHub** from a sample ticket to open a prefilled issue. This prepares a draft; publishing requires submitting it on GitHub.
-8. Use **Reset sample data** to restore the fictional workspace. It does not change GitHub.
+Use the [platform walkthrough](PLATFORM-GUIDE.md) for the real ticket → triage → implementation → evidence → human merge → deployment flow. Sign in as a maintainer before starting paid agents or writing to GitHub. The mock inbox receives fictional customer requests but creates real persisted tickets and requests actual agent runs.
 
-The four projects, people, tickets and sample PRs are fictional. Sample checks and reviews are deterministic simulations. The GitHub view and pipeline page query actual public data. No intentional application bug is currently seeded; sample PR findings are scenario data.
+Review the exact PR head, tests, agent review, and generated evidence before merging. Reports and recordings are real GitHub artifacts; an earlier revision's artifacts do not satisfy the current merge gate.
+
+## Preserved local playground
+
+Open `/showcase.html` for the previous fictional multi-project workspace. Its overview, board/list filters, ticket creation/editing, PR finding/fix/check/merge flow, and reset remain interactive and save in the browser. Its sample mutations do not modify GitHub. The GitHub tab and `/pipeline.html` query real public data.
+
+The four projects, people, tickets, and sample PRs in this playground are fictional. Its checks and reviews are deterministic simulations. No intentional application bug is currently seeded; sample findings are scenario data.
 
 ## Historical agent evidence
 
@@ -33,7 +32,9 @@ npm run scan:secrets
 
 `check` runs syntax checks, Node tests, and a clean build. Unit tests cover workspace validation, immutable ticket/PR operations, merge guards, persistence recovery, the public GitHub adapter, issue validation, regression evidence, review reporting, workflow policy, and deployment verification.
 
-Browser checks run against the built application on desktop and mobile. They cover search/filtering, creation/editing/persistence, safe text rendering, PR review/fix/merge, blocked ticket completion, reset, corrupted local data, GitHub API results and outages, and the real pipeline page. GitHub responses are stubbed in browser CI for deterministic results. Stubs are test-only; the application uses the public API.
+Browser checks run against the built application on desktop and mobile. Platform cases cover public access and authentication, ticket creation, version-conflict draft preservation, contributor mentions, agent actions, polling without losing an unsent reply, triage references, exact-head merge confirmation, feedback and human editing, safe text/links, read/write failures, and inbox retries. Legacy cases continue to cover the preserved playground and public GitHub adapter.
+
+Platform API and GitHub responses are stubbed in browser CI for deterministic results. Stubs are test-only. Backend integration tests exercise temporary databases and mocked GitHub responses. Native workerd tests also exercise Cloudflare's actual fetch and D1 runtime, including authentication, CSRF, issue creation, mentions, Actions dispatch, and redirect rejection. Workflow tests validate the trusted orchestration and artifact boundaries. These tests do not claim that a real paid agent, remote GitHub merge, or Cloudflare deployment happened. Live operational smoke runs must be recorded separately.
 
 CI runs Node 22 and 24. Browser tests serve the built site on port 4174; development defaults to 4173. Reports are saved in ignored `playwright-report/` and `test-results/` directories.
 
@@ -47,11 +48,12 @@ This proves a behavioral difference, not exhaustive correctness. A maintainer st
 
 ## End-to-end agent acceptance
 
-1. Confirm a new bug is reproducible before adding `agent-ready`.
-2. Inspect the implementation run and its **regression-evidence** artifact.
-3. Confirm only demo source and demo tests changed.
-4. Check the exact PR revision has green **verify** and **AI review** statuses.
-5. Inspect browser evidence and reviewer findings, then make the human merge decision.
-6. Follow main CI through **deploy** and confirm the public manifest matches the merged commit.
+1. Create a ticket in Relay with a concrete request; include reproduction steps for bugs.
+2. Mention `@ai` and inspect the completed triage, acceptance criteria, and source references.
+3. Choose **Start implementation** and inspect the actual Actions run and linked PR. Bug implementations must demonstrate a failing assertion on the original source.
+4. Confirm only permitted browser source and behavioral tests changed. Check the exact PR revision has green **verify** and **AI review** statuses.
+5. Inspect the separate evidence run's real browser report and videos. Exercise feedback or human editing when changes are needed.
+6. Use **Approve and merge** for the exact reviewed revision, then follow main CI through the Cloudflare deployment and confirm the public manifest matches the deployed commit.
+7. Simulate a fictional support email in the inbox and confirm it creates one ticket and starts triage; retry the same submission to check idempotency.
 
 New workflow definitions take full effect after the upgrade is merged. Deployment only runs from main.

@@ -1,0 +1,444 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Store } from '../worker/db.js';
+import { sha256 } from '../worker/model.js';
+import { platformHarness, PR_SHA, BASE_SHA, REPO } from './helpers/platform-harness.js';
+
+const old = '2000-01-01T00:00:00.000Z';
+const email = { senderName: 'Jamie Example', senderEmail: 'jamie@example.test', subject: 'Recover interrupted email', body: 'Please preserve this support request.', idempotencyKey: 'durable-email-001' };
+const triage = { description: 'Keep support requests durable across interrupted delivery.', summary: 'A recoverable inbox transaction is required.', ready: true, acceptanceCriteria: ['Retrying an email creates one ticket.'], files: [], documentation: [] };
+async function setup(context) {
+  const api = await platformHarness(context);
+  assert.equal((await api.signIn()).status, 200);
+  return { api, store: new Store(api.DB) };
+}
+async function ticket(context, changes = {}) {
+  const { api, store } = await setup(context);
+  const created = await api.createTicket();
+  return { api, store, ticket: await store.update(created.data.ticket, changes) };
+}
+async function review(context, changes = {}) {
+  return ticket(context, { status: 'in_review', prNumber: 71, prUrl: `https://github.com/${REPO}/pull/71`, headSha: PR_SHA, triage: { ready: true }, ...changes });
+}
+
+test('an interrupted inbox reservation reuses its durable ticket and queues triage once', async context => {
+  const { api, store, ticket: original } = await ticket(context, { sourceInboxId: 'interrupted-email' });
+  const message = { id: 'interrupted-email', ...email, ticketId: null, createdAt: old, processingUntil: 1 };
+  const hash = await sha256(JSON.stringify({ senderName: email.senderName, senderEmail: email.senderEmail, subject: email.subject, body: email.body }));
+  await api.DB.prepare('INSERT INTO inbox(id,idempotency_key,request_hash,data,created_at) VALUES(?,?,?,?,?)').bind(message.id, email.idempotencyKey, hash, JSON.stringify(message), old).run();
+  const recovered = await api.request('/api/inbox', { method: 'POST', body: email });
+  assert.equal(recovered.status, 201);
+  assert.equal(recovered.data.ticket.id, original.id);
+  assert.equal(recovered.data.message.ticketId, original.id);
+  assert.equal((await store.listTickets()).length, 1);
+  assert.equal(api.github.dispatches.length, 1);
+  const repeated = await api.request('/api/inbox', { method: 'POST', body: email });
+  assert.equal(repeated.status, 201);
+  assert.equal(api.github.dispatches.length, 1);
+});
+
+test('ticket creation and inbox association roll back together before any external action', async context => {
+  const { api, store } = await setup(context), database = api.env.DB;
+  api.env.DB = new Proxy(database, { get(target, key) {
+    if (key === 'batch') return statements => target.batch([...statements, target.prepare('INSERT INTO missing_recovery_fixture VALUES(1)')]);
+    const value = target[key]; return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const failed = await api.request('/api/inbox', { method: 'POST', body: email });
+  assert.equal(failed.status, 500);
+  assert.equal((await store.listTickets()).length, 0);
+  assert.equal((await store.inbox()).length, 0);
+  assert.equal(api.github.calls.length, 0);
+  api.env.DB = database;
+  assert.equal((await api.request('/api/inbox', { method: 'POST', body: email })).status, 201);
+  assert.equal((await store.listTickets()).length, 1);
+});
+
+test('retrying a failed inbox dispatch resumes its existing ticket and honors human editing', async context => {
+  const { api, store } = await setup(context);
+  api.github.failure = { path: '/dispatches', status: 503 };
+  const failed = await api.request('/api/inbox', { method: 'POST', body: email });
+  assert.equal(failed.status, 201);
+  assert.equal(failed.data.ticket.status, 'failed');
+  assert.equal(failed.data.message.processingComplete, false);
+  api.github.failure = null;
+  const recovered = await api.request('/api/inbox', { method: 'POST', body: email });
+  assert.equal(recovered.status, 201);
+  assert.equal(recovered.data.ticket.id, failed.data.ticket.id);
+  assert.equal(recovered.data.ticket.status, 'triaging');
+  assert.equal(recovered.data.message.processingComplete, true);
+  assert.equal(api.github.dispatches.length, 1);
+  assert.equal(api.github.calls.filter(call => call.path.endsWith('/issues') && call.method === 'POST').length, 1);
+  assert.equal((await store.listTickets()).length, 1);
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+  assert.equal((await api.request('/api/inbox', { method: 'POST', body: email })).data.ticket.status, 'human_edit');
+  assert.equal(api.github.dispatches.length, 1);
+});
+
+test('an inbox lease expires and resumes a linked ticket after process interruption', async context => {
+  const { api, store, ticket: original } = await ticket(context, { sourceInboxId: 'leased-email' });
+  const message = { id: 'leased-email', ...email, ticketId: original.id, createdAt: old, processingUntil: Date.now() + 60_000, processingOwner: 'interrupted-process' };
+  const hash = await sha256(JSON.stringify({ senderName: email.senderName, senderEmail: email.senderEmail, subject: email.subject, body: email.body }));
+  await api.DB.prepare('INSERT INTO inbox(id,idempotency_key,request_hash,data,created_at) VALUES(?,?,?,?,?)').bind(message.id, email.idempotencyKey, hash, JSON.stringify(message), old).run();
+  assert.equal((await api.request('/api/inbox', { method: 'POST', body: email })).status, 409);
+  assert.equal(api.github.dispatches.length, 0);
+  await api.DB.prepare('UPDATE inbox SET data=json_set(data,\'$.processingUntil\',1) WHERE id=?').bind(message.id).run();
+  assert.equal((await api.request('/api/inbox', { method: 'POST', body: email })).status, 201);
+  assert.equal((await store.listTickets()).length, 1);
+  assert.equal(api.github.dispatches.length, 1);
+});
+
+test('expired merge locks release only after GitHub confirms the same revision is still unmerged', async context => {
+  const { api, store } = await review(context, { mergePending: true, mergeStartedAt: old });
+  api.github.failure = { path: '/pulls/71', status: 503 };
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.ticket.mergePending, true);
+  api.github.failure = null;
+  api.github.pull.head.ref = 'unrelated-branch';
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.ticket.mergePending, true);
+  api.github.pull.head.ref = 'relay/ticket-RLY-1';
+  api.github.pull.head.sha = BASE_SHA;
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.ticket.mergePending, true);
+  api.github.pull.head.sha = PR_SHA;
+  const recovered = await api.request('/api/tickets/RLY-1');
+  assert.equal(recovered.data.ticket.mergePending, false);
+  assert.equal(recovered.data.ticket.status, 'in_review');
+  assert.match(recovered.data.ticket.error, /interrupted|expired/i);
+  assert.equal(api.github.mergeCalls, 0);
+  await store.update(await store.ticket('RLY-1'), { mergePending: true, mergeStartedAt: new Date().toISOString() });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.ticket.mergePending, true);
+});
+
+test('AI mentions during active triage coalesce into one durable rerun using current discussion', async context => {
+  const { api, store } = await ticket(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  const initialJob = started.data.jobs[0];
+  for (const body of ['@ai include Safari.', '@ai also preserve keyboard focus.']) {
+    assert.equal((await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body } })).status, 200);
+  }
+  assert.ok((await store.ticket('RLY-1')).pendingAgent);
+  assert.equal(api.github.dispatches.length, 1);
+  const payload = { status: 'succeeded', runId: 456, summary: 'Initial triage completed.', triage };
+  assert.equal((await api.callback(initialJob.id, payload)).status, 200);
+  const current = await store.ticket('RLY-1'), jobs = await store.jobs('RLY-1');
+  assert.equal(current.pendingAgent, null);
+  assert.equal(current.status, 'triaging');
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].kind, 'triage', 'triage feedback must not bypass the human implementation action');
+  assert.equal(jobs[0].description, triage.description);
+  assert.equal(api.github.dispatches.length, 2);
+  const snapshot = await api.request(`/api/automation/jobs/${jobs[0].id}`, { headers: { Authorization: 'Bearer ' + api.env.RELAY_CALLBACK_SECRET } });
+  assert.ok(snapshot.data.comments.some(comment => comment.body.includes('keyboard focus')));
+  assert.equal((await api.callback(initialJob.id, payload)).status, 200);
+  assert.equal(api.github.dispatches.length, 2);
+});
+
+test('feedback during implementation takes priority over evidence and blocks merging until consumed', async context => {
+  const { api, store } = await review(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  const original = started.data.jobs[0];
+  assert.equal((await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: 'Please also handle keyboard navigation.', kind: 'feedback' } })).status, 200);
+  assert.ok((await store.ticket('RLY-1')).pendingAgent);
+  assert.equal((await api.callback(original.id, { status: 'succeeded', runId: 456, summary: 'First changes published.', pullRequest: { number: 71, headSha: PR_SHA } })).status, 409);
+  assert.equal((await api.callback(original.id, { status: 'failed', runId: 456, summary: 'New feedback superseded this run.' })).status, 200);
+  const jobs = await store.jobs('RLY-1');
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].kind, 'implement');
+  assert.equal(jobs[0].headSha, PR_SHA);
+  assert.equal(api.github.dispatches.length, 2);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).status, 409);
+  assert.equal(api.github.mergeCalls, 0);
+});
+
+test('new clarification received during triage reruns even when the old snapshot needs more detail', async context => {
+  const { api, store } = await ticket(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai clarification: reproduce in Safari by typing then waiting eight seconds.' } });
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, triage: { ...triage, ready: false } })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).status, 'triaging');
+  assert.equal((await store.jobs('RLY-1')).length, 2);
+  assert.equal(api.github.dispatches.length, 2);
+});
+
+test('human editing clears pending feedback and prevents terminal retries from launching it', async context => {
+  const { api, store } = await ticket(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai revise the approach.' } });
+  assert.ok((await store.ticket('RLY-1')).pendingAgent);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } })).status, 200);
+  const current = await store.ticket('RLY-1');
+  assert.equal(current.pendingAgent, null);
+  assert.equal(current.status, 'human_edit');
+  await api.callback(started.data.jobs[0].id, { status: 'failed', runId: 456, summary: 'Cancelled.' });
+  assert.equal(api.github.dispatches.length, 1);
+});
+
+test('a repeated terminal callback recovers an interrupted feedback handoff without duplicate jobs', async context => {
+  const { api, store } = await ticket(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai include my new evidence.' } });
+  const database = api.env.DB;
+  api.env.DB = new Proxy(database, { get(target, key) {
+    if (key === 'batch') return async statements => { await target.batch(statements); throw new Error('Process interrupted after terminal commit'); };
+    const value = target[key]; return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const payload = { status: 'succeeded', runId: 456, triage };
+  assert.equal((await api.callback(started.data.jobs[0].id, payload)).status, 500);
+  assert.ok((await store.ticket('RLY-1')).pendingAgent);
+  assert.equal((await store.ticket('RLY-1')).activeJobId, null);
+  api.env.DB = database;
+  const retries = await Promise.all([api.callback(started.data.jobs[0].id, payload), api.callback(started.data.jobs[0].id, payload)]);
+  assert.ok(retries.every(result => result.status === 200));
+  assert.equal((await store.jobs('RLY-1')).length, 2);
+  assert.equal(api.github.dispatches.length, 2);
+});
+
+test('implementation completion recovers one evidence handoff and never revives consumed or superseded work', async context => {
+  for (const scenario of ['recover', 'pause', 'new-work', 'changed-head', 'changed-request']) {
+    const { api, store } = await review(context);
+    const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+    const id = started.data.ticket.activeJobId, payload = { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } }, database = api.env.DB;
+    api.env.DB = new Proxy(database, { get(target, key) {
+      if (key === 'batch') return async statements => { await target.batch(statements); throw new Error('Process interrupted after implementation commit'); };
+      const value = target[key]; return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    assert.equal((await api.callback(id, payload)).status, 500);
+    api.env.DB = database;
+    assert.equal((await store.job(id)).status, 'succeeded');
+    if (scenario === 'pause') {
+      await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+      await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'resume' } });
+    } else if (scenario === 'new-work') {
+      const newer = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+      assert.equal((await api.callback(newer.data.ticket.activeJobId, { status: 'failed', runId: 457, summary: 'Newer work failed.' })).status, 200);
+    } else if (scenario === 'changed-head') await store.update(await store.ticket('RLY-1'), { headSha: 'd'.repeat(40) });
+    else if (scenario === 'changed-request') {
+      const current = await store.ticket('RLY-1');
+      assert.equal((await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, title: 'A changed implementation request' } })).status, 200);
+    }
+    const retries = await Promise.all([api.callback(id, payload), api.callback(id, payload)]);
+    assert.ok(retries.every(result => result.status === 200));
+    const evidence = (await store.jobs('RLY-1')).filter(job => job.kind === 'evidence');
+    assert.equal(evidence.length, scenario === 'recover' ? 1 : 0, scenario);
+    if (scenario === 'recover') {
+      assert.equal(api.github.dispatches.length, 2);
+      assert.equal((await store.ticket('RLY-1')).pendingEvidenceJobId, null);
+      assert.equal((await api.callback(evidence[0].id, { status: 'failed', runId: 458, summary: 'Evidence failed.' })).status, 200);
+      assert.equal((await api.callback(id, payload)).status, 200);
+      assert.equal(api.github.dispatches.length, 2, 'a consumed failed evidence run must not restart');
+      assert.equal((await store.jobs('RLY-1')).filter(job => job.kind === 'evidence').length, 1);
+    }
+  }
+});
+
+test('failed feedback dispatch preserves the request, blocks merge, and retries the latest head', async context => {
+  const { api, store } = await review(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: 'Improve keyboard focus.', kind: 'feedback' } });
+  api.github.failure = { path: '/dispatches', status: 503 };
+  const payload = { status: 'failed', runId: 456, summary: 'New feedback superseded this run.' };
+  assert.equal((await api.callback(started.data.jobs[0].id, payload)).status, 200);
+  assert.ok((await store.ticket('RLY-1')).pendingAgent);
+  assert.match((await store.ticket('RLY-1')).error, /Feedback is saved/);
+  await store.update(await store.ticket('RLY-1'), { status: 'in_review' });
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).status, 409);
+  assert.equal(api.github.mergeCalls, 0);
+  api.github.failure = null;
+  api.github.pull.head.sha = 'd'.repeat(40);
+  assert.equal((await api.callback(started.data.jobs[0].id, payload)).status, 200);
+  const current = await store.ticket('RLY-1');
+  assert.equal(current.pendingAgent, null);
+  assert.equal((await store.job(current.activeJobId)).headSha, 'd'.repeat(40));
+  assert.equal(api.github.dispatches.length, 2);
+});
+
+test('an interrupted queued dispatch is resumed under one lease without allocating another job', async context => {
+  const { api, store, ticket: original } = await ticket(context);
+  const started = await store.startJob(original, 'triage', BASE_SHA);
+  await store.claimDispatch(started.job);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } })).status, 409);
+  await api.DB.prepare('UPDATE jobs SET data=json_set(data,\'$.dispatchUntil\',1) WHERE id=?').bind(started.job.id).run();
+  const attempts = await Promise.all([api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } }), api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } })]);
+  assert.ok(attempts.some(result => result.status === 200));
+  assert.ok(attempts.every(result => [200,409].includes(result.status)));
+  assert.equal(api.github.dispatches.length, 1);
+  assert.equal((await store.jobs('RLY-1')).length, 1);
+  assert.equal((await store.ticket('RLY-1')).activeJobId, started.job.id);
+});
+
+test('a pending dispatch older than the activity window resumes the same job exactly once', async context => {
+  const { api, store, ticket: original } = await ticket(context);
+  const started = await store.startJob(original, 'triage', BASE_SHA);
+  await api.DB.prepare('UPDATE jobs SET created_at=? WHERE id=?').bind(old, started.job.id).run();
+  const other = await store.create({ ...original, status: 'ready', activeJobId: null });
+  await api.DB.batch(Array.from({ length: 100 }, (_, index) => api.DB.prepare('INSERT INTO jobs(id,ticket_id,kind,status,data,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+    .bind('finished-'+index, other.id, 'triage', 'succeeded', '{}', '2020-01-01T00:00:00.000Z', old)));
+  assert.equal((await store.jobs()).some(job => job.id === started.job.id), false);
+  const attempts = await Promise.all([1,2].map(() => api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } })));
+  assert.ok(attempts.some(result => result.status === 200));
+  assert.ok(attempts.every(result => [200,409].includes(result.status)));
+  assert.equal(api.github.dispatches.length, 1);
+  assert.equal((await store.job(started.job.id)).dispatchState, 'accepted');
+  assert.equal((await store.ticket('RLY-1')).activeJobId, started.job.id);
+  assert.equal((await api.DB.prepare('SELECT COUNT(*) AS count FROM jobs').first()).count, 101);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } })).status, 409);
+  assert.equal(api.github.dispatches.length, 1);
+});
+
+test('simultaneous feedback comments preserve both requests and one active follow-up', async context => {
+  const { api, store } = await ticket(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  const comments = await Promise.all(['@ai include keyboard support.', '@ai include screen reader support.'].map(body => api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body } })));
+  assert.ok(comments.every(result => result.status === 200));
+  assert.equal((await store.comments('RLY-1')).filter(comment => comment.body.includes('@ai include')).length, 2);
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'failed', runId: 456, summary: 'The initial attempt failed.' })).status, 200);
+  const jobs = await store.jobs('RLY-1');
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs.filter(job => ['queued','running'].includes(job.status)).length, 1);
+  assert.equal(api.github.dispatches.length, 2);
+});
+
+test('automation snapshots retain the latest comments after the discussion reaches its display limit', async context => {
+  const { api, store } = await ticket(context);
+  await api.DB.batch(Array.from({ length: 301 }, (_, index) => api.DB.prepare('INSERT INTO comments(id,ticket_id,author_id,body,kind,created_at) VALUES(?,?,?,?,?,?)')
+    .bind('history-'+String(index).padStart(3,'0'),'RLY-1','huti','Old comment '+index,'comment',old)));
+  const queued = await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai the newest acceptance criterion must be included.' } });
+  assert.equal(queued.status, 200);
+  const current = await store.ticket('RLY-1');
+  const snapshot = await api.request(`/api/automation/jobs/${current.activeJobId}`, { headers: { Authorization: 'Bearer ' + api.env.RELAY_CALLBACK_SECRET } });
+  assert.equal(snapshot.data.comments.length, 300);
+  assert.ok(snapshot.data.comments.some(comment => comment.body.includes('newest acceptance criterion')));
+});
+
+test('substantive request edits invalidate a reviewed PR until fresh implementation and evidence complete', async context => {
+  const { api, store, ticket: original } = await review(context);
+  const oldEvidence = await store.createJob(original, 'evidence', BASE_SHA);
+  await store.updateJob(oldEvidence, { status: 'succeeded', evidence: [{ kind: 'video' }], headSha: PR_SHA });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+  for (const change of [{ title: 'Support Safari too' }, { description: 'Also retain draft focus across route changes.' }, { type: 'feature' }]) {
+    const current = await store.ticket('RLY-1');
+    const edited = await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, ...change } });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.data.pullRequest.canMerge, false);
+    assert.equal(edited.data.pullRequest.evidenceReady, false);
+    assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).status, 409);
+    assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).status, 409);
+  }
+  assert.equal(api.github.dispatches.length, 0, 'editing must not start paid automation');
+  assert.equal(api.github.mergeCalls, 0);
+  const current = await store.ticket('RLY-1');
+  assert.equal(current.requestRevision, 3);
+  const metadata = await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, priority: 'urgent', tags: ['accessibility'] } });
+  assert.equal(metadata.data.ticket.requestRevision, 3, 'metadata changes do not invalidate implementation');
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal(started.status, 200);
+  const implementation = started.data.jobs[0];
+  assert.equal((await store.job(implementation.id)).requestRevision, 3);
+  assert.equal((await api.callback(implementation.id, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).implementedRequestRevision, 3);
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, false, 'fresh implementation still requires fresh evidence');
+  const evidence = (await store.jobs('RLY-1')).find(job => job.status === 'queued');
+  await store.updateJob(evidence, { status: 'succeeded', evidence: [{ kind: 'video' }], headSha: PR_SHA });
+  await store.update(await store.ticket('RLY-1'), { activeJobId: null });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+});
+
+test('editing and reverting a request still rejects an older implementation callback', async context => {
+  const { api, store, ticket: original } = await review(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  for (const title of ['Temporary clarified request', original.title]) {
+    const current = await store.ticket('RLY-1');
+    assert.equal((await api.request('/api/tickets/RLY-1', { method: 'PATCH', body: { version: current.version, title } })).status, 200);
+  }
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 409);
+  assert.equal((await store.job(started.data.jobs[0].id)).status, 'queued');
+});
+
+test('triage description changes require reimplementation of an existing PR', async context => {
+  const { api, store } = await review(context);
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, triage })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).requestRevision, 1);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).status, 409);
+  const repeated = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+  assert.equal((await api.callback(repeated.data.jobs[0].id, { status: 'succeeded', runId: 457, triage })).status, 200);
+  assert.equal((await store.ticket('RLY-1')).requestRevision, 1, 'unchanged triage text keeps the revision');
+  const implementing = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal((await store.job(implementing.data.jobs[0].id)).requestRevision, 1);
+});
+
+test('triage acceptance criteria changes require implementation even when the description is unchanged', async context => {
+  const { api, store, ticket: original } = await review(context, { description: triage.description, triage });
+  const previousEvidence = await store.createJob(original, 'evidence', BASE_SHA);
+  await store.updateJob(previousEvidence, { status: 'succeeded', headSha: PR_SHA, evidence: [{ kind: 'video' }] });
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+  const updated = { ...triage, summary: 'Updated supporting context.', files: [{ path: 'demo/index.html', reason: 'Ticket interface' }] };
+  for (const [criteria, revision] of [[triage.acceptanceCriteria, 0], [['Retrying an email creates one ticket.', 'Keyboard focus remains in the composer.'], 1]]) {
+    const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'triage' } });
+    assert.equal(started.status, 200);
+    assert.equal((await api.callback(started.data.ticket.activeJobId, { status: 'succeeded', runId: 456, triage: { ...updated, acceptanceCriteria: criteria } })).status, 200);
+    assert.equal((await store.ticket('RLY-1')).requestRevision || 0, revision);
+  }
+  assert.equal((await store.ticket('RLY-1')).description, original.description);
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).data.code, 'request_changed');
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'resume' } });
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).data.code, 'request_changed');
+  assert.equal(api.github.mergeCalls, 0);
+  const implementing = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal(implementing.status, 200);
+  assert.equal((await api.callback(implementing.data.ticket.activeJobId, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  const current = await api.request('/api/tickets/RLY-1');
+  assert.equal(current.data.ticket.implementedRequestRevision, 1);
+  assert.equal(current.data.pullRequest.canMerge, false, 'fresh implementation still requires new evidence');
+  const evidence = [{ kind: 'artifact', title: 'Updated criteria verified', url: `https://github.com/${REPO}/actions/runs/456/artifacts/789`, headSha: PR_SHA }];
+  assert.equal((await api.callback(current.data.ticket.activeJobId, { status: 'succeeded', runId: 456, headSha: PR_SHA, evidence })).status, 200);
+  assert.equal((await api.request('/api/tickets/RLY-1')).data.pullRequest.canMerge, true);
+});
+
+test('failed feedback implementation keeps the request unfulfilled without an automatic retry loop', async context => {
+  const { api, store, ticket: original } = await review(context);
+  const evidence = await store.createJob(original, 'evidence', BASE_SHA);
+  await store.updateJob(evidence, { status: 'succeeded', headSha: PR_SHA, evidence: [{ kind: 'video' }] });
+  const feedback = await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: 'Please support keyboard navigation.', kind: 'feedback' } });
+  const job = feedback.data.jobs.find(item => item.status === 'queued');
+  assert.equal((await api.callback(job.id, { status: 'failed', runId: 456, summary: 'Implementation failed.' })).status, 200);
+  assert.equal(api.github.dispatches.length, 1, 'failure must not start an unbounded paid retry loop');
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'evidence' } })).status, 409);
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'human-edit' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai also retain screen reader focus.' } });
+  await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'resume' } });
+  assert.equal((await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'approve-merge', headSha: PR_SHA } })).status, 409);
+  assert.equal(api.github.mergeCalls, 0);
+  assert.equal(api.github.dispatches.length, 1);
+  const retried = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  assert.equal((await api.callback(retried.data.jobs[0].id, { status: 'succeeded', runId: 457, pullRequest: { number: 71, headSha: PR_SHA } })).status, 200);
+  const current = await store.ticket('RLY-1');
+  assert.equal(current.requestRevision, 2);
+  assert.equal(current.implementedRequestRevision, 2);
+  assert.equal(api.github.dispatches.length, 3, 'explicit retry then fresh evidence');
+});
+
+test('concurrent agent requests compete atomically for the final global slot', async context => {
+  const { api, store } = await setup(context);
+  const tickets = [];
+  for (let index = 0; index < 4; index++) tickets.push((await api.createTicket({ title: 'Capacity ticket '+index })).data.ticket);
+  await store.startJob(tickets[0], 'triage', BASE_SHA);
+  await store.startJob(tickets[1], 'triage', BASE_SHA);
+  const results = await Promise.allSettled(tickets.slice(2).map(item => store.startJob(item, 'triage', BASE_SHA)));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  const rejected = results.find(result => result.status === 'rejected');
+  assert.equal(rejected.reason.status, 429);
+  assert.equal(rejected.reason.code, 'agent_capacity');
+  assert.equal((await store.jobs()).filter(job => ['queued','running'].includes(job.status)).length, 3);
+  const loser = tickets[results.findIndex(result => result.status === 'rejected')+2];
+  const unchanged = await store.ticket(loser.id);
+  assert.equal(unchanged.version, loser.version);
+  assert.equal(unchanged.activeJobId, null);
+});
+
+test('AI feedback during initial implementation invalidates that snapshot before a PR exists', async context => {
+  const { api, store } = await ticket(context, { status: 'ready', triage: { ready: true } });
+  const started = await api.request('/api/tickets/RLY-1/actions', { method: 'POST', body: { action: 'implement' } });
+  await api.request('/api/tickets/RLY-1/comments', { method: 'POST', body: { body: '@ai include keyboard support.' } });
+  assert.equal((await store.ticket('RLY-1')).requestRevision, 1);
+  assert.equal((await api.callback(started.data.jobs[0].id, { status: 'succeeded', runId: 456, pullRequest: { number: 71, headSha: PR_SHA } })).status, 409);
+});
