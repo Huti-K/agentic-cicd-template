@@ -21,7 +21,7 @@ async function installClipboard(page, mode = 'success') {
 const copyButton=page=>page.getByRole('button',{name:'Copy ticket link',exact:true});
 const copiedURL=page=>page.evaluate(()=>window.ticketClipboardFixture.writes.at(-1));
 
-test('fixture-backed public copy works beside a long title and opens the same ticket', async ({page}) => {
+test('fixture-backed public copy works beside a long title and opens the same ticket', { tag: '@mobile' }, async ({page}) => {
   const api=await installPlatformAPI(page,{authenticated:false});
   api.detail.ticket.title='Long customer title '+ 'x'.repeat(180) + ' <img src=x onerror=alert(1)>';
   const original=structuredClone(api.detail),errors=[];

@@ -1,7 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 import { resolve } from 'node:path';
+const ticketId = process.env.RELAY_EVIDENCE_TICKET;
+if (!/^RLY-[1-9]\d*$/.test(ticketId || '')) throw new Error('A valid RELAY_EVIDENCE_TICKET is required for ticket recordings.');
 export default defineConfig({
   testDir: resolve('e2e/agent'),
+  testMatch: `relay-${ticketId}.spec.js`,
   outputDir: resolve('.agent-output/browser-results'),
   forbidOnly: true,
   retries: 0,

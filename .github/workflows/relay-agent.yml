@@ -248,6 +248,8 @@ jobs:
         id: evidence
         continue-on-error: true
         if: success() && needs.prepare.outputs.kind == 'evidence' && steps.check.outcome == 'success'
+        env:
+          RELAY_EVIDENCE_TICKET: ${{ inputs.ticket_id }}
         run: npx playwright test --config .relay-trusted/scripts/relay/playwright.config.mjs
       - name: Verify actual scenario counts and recordings
         if: success() && needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome == 'success'
@@ -433,6 +435,8 @@ jobs:
       - name: Record independent scenarios with videos and screenshots
         id: evidence
         if: needs.prepare.outputs.kind == 'evidence'
+        env:
+          RELAY_EVIDENCE_TICKET: ${{ inputs.ticket_id }}
         run: npx playwright test --config .relay-trusted/scripts/relay/playwright.config.mjs
       - name: Verify actual scenario counts and recordings
         if: needs.prepare.outputs.kind == 'evidence'
