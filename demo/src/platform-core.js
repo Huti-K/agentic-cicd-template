@@ -1,6 +1,12 @@
 export const STATUS = { new:'New', triaging:'Triaging', ready:'Ready to build', implementing:'Implementing', in_review:'In review', human_edit:'Human editing', merged:'Merged', deployed:'Deployed', failed:'Needs attention' };
 export const PRIORITY = { urgent:'Urgent', high:'High', medium:'Medium', low:'Low' };
 
+export function descriptionCounterText(value, maximum) {
+  const used = value.length;
+  const format = count => count.toLocaleString('en-US');
+  return `${format(used)} of ${format(maximum)} characters used · ${format(Math.max(0, maximum - used))} remaining`;
+}
+
 export function safeURL(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; }
 }
