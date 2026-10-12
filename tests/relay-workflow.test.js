@@ -107,7 +107,7 @@ test('trusted platform callbacks retry transient failures with identical data, b
 
 const workflow = parse(await readFile('.github/workflows/relay-agent.yml', 'utf8'));
 test('AI/candidate jobs never receive callback/deployment or GitHub write credentials', () => {
-  for (const name of ['triage', 'agent', 'verify']) {
+  for (const name of ['triage', 'agent', 'verify', 'repair', 'verify-repair']) {
     const job = workflow.jobs[name];
     assert.deepEqual(job.permissions, { contents: 'read' });
     assert.doesNotMatch(JSON.stringify(job), /RELAY_CALLBACK_SECRET|CLOUDFLARE|GH_TOKEN/);
@@ -122,8 +122,8 @@ test('AI/candidate jobs never receive callback/deployment or GitHub write creden
   }
 });
 test('publish/report require isolated verification, trusted automation, and exact head evidence', async () => {
-  assert.deepEqual(workflow.jobs.publish.needs, ['prepare', 'verify']);
-  assert.deepEqual(workflow.jobs['evidence-report'].needs, ['prepare', 'verify']);
+  assert.deepEqual(workflow.jobs.publish.needs, ['prepare', 'verify', 'verify-repair']);
+  assert.deepEqual(workflow.jobs['evidence-report'].needs, ['prepare', 'verify', 'verify-repair']);
   const commands = workflow.jobs.publish.steps.map(step => step.run || '').join('\n');
   assert.doesNotMatch(commands, /npm |npx |node scripts\//);
   assert.match(commands, /node \.relay-trusted\/scripts\/relay\/run\.mjs publish/);
@@ -157,19 +157,19 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     const value = fixture(); value.baseSha = source; value.sourceSha = source;
     const writes = [];
     let current = structuredClone(value);
-    let dispatches = [];
+    let dispatches = [],published=false;
     const api = {
       platform: async (path, body) => { assert.equal(path, '/api/automation/jobs/job-1'); if (body) { writes.push(body); return {}; } return structuredClone(current); },
       github: async (path, body, method) => {
         if (path === '') return { default_branch: 'main' };
         if (path === 'commits/main') return { sha: source };
         if (path.startsWith('pulls?state=open')) return [];
-        if (path === 'git/ref/heads/relay/ticket-RLY-1') { const error = new Error('Missing'); error.status = 404; throw error; }
+        if (path === 'git/ref/heads/relay/ticket-RLY-1') { if(published)return {object:{sha:nextSha}};const error = new Error('Missing'); error.status = 404; throw error; }
         if (path === 'git/commits/' + source) return { tree: { sha: 'c'.repeat(40) } };
         if (path === 'git/trees') { assert.equal(body.tree.length, 2); return { sha: 'd'.repeat(40) }; }
         if (path === 'git/commits') { assert.deepEqual(body.parents, [source]); return { sha: nextSha }; }
-        if (path === 'git/refs') { assert.deepEqual(body, { ref: 'refs/heads/relay/ticket-RLY-1', sha: nextSha }); return {}; }
-        if (path === 'pulls') { assert.match(body.body, /Closes #10/); return { number: 42, head: { sha: nextSha } }; }
+        if (path === 'git/refs') { assert.deepEqual(body, { ref: 'refs/heads/relay/ticket-RLY-1', sha: nextSha }); published=true;return {}; }
+        if (path === 'pulls') { assert.match(body.body, /Closes #10/); return {...prFixture(),head:{...prFixture().head,sha:nextSha}}; }
         if (path.includes('/dispatches')) { dispatches.push({ path, body }); return null; }
         throw new Error('Unexpected API call: ' + path + ' ' + method);
       },
@@ -193,7 +193,7 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     let leased = false;
     api.github = async (path, body, method) => {
       if (path === 'pulls/42' && !body) return { ...prFixture(), head: { ...prFixture().head, sha: source } };
-      if (path === 'pulls/42' && body) return { number: 42, head: { sha: nextSha } };
+      if (path === 'pulls/42' && body) return {...prFixture(),head:{...prFixture().head,sha:nextSha}};
       if (path === 'git/refs/heads/relay/ticket-RLY-1') { assert.equal(method, 'PATCH'); assert.deepEqual(body, { sha: nextSha, force: false }); leased = true; return {}; }
       return firstGithub(path, body, method);
     };
@@ -223,6 +223,7 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     assert.throws(() => validateCandidate(fixture()), /1–30/);
     api.github = async (path, body) => {
       if (path === 'pulls/42') return { ...prFixture(), head: { ...prFixture().head, sha: source } };
+      if (path === 'git/ref/heads/relay/ticket-RLY-1') return {object:{sha:source}};
       if (path.includes('/dispatches')) return null;
       throw new Error('Recovered unchanged publication must not create commits: ' + path + ' ' + JSON.stringify(body));
     };

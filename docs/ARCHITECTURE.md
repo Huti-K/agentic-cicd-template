@@ -31,12 +31,15 @@ External URLs must be HTTPS and repository paths are encoded into GitHub source 
 1. **Preparation** fetches the authorized job using the callback credential, fixes the relevant source revision, and writes bounded task data for later jobs.
 2. **AI work** uses an isolated runner. Triage proposes a structured brief; implementation proposes application/test changes; evidence generation proposes end-to-end tests. AI output remains untrusted.
 3. **Verification** uses another runner to validate allowed paths, apply the proposal, and execute the appropriate checks. Candidate source/tests do not receive repository write, callback, or deployment credentials. Bug fixes require regression evidence when existing entry points permit reproduction. Evidence tests run against the exact PR head and cannot change application code.
-4. **Publication/reporting** validates collected output before publishing a branch/PR or recording triage/evidence. This trusted step does not execute candidate application code or tests.
-5. **Callbacks** record the real run ID, head revision, result, and artifact links. Duplicate callbacks are idempotent; stale or cancelled jobs cannot overwrite newer ticket state.
+4. **Bounded repair** retains a validated proposal after a test failure and passes its actual verifier diagnostics to one isolated repair agent. A second verifier repeats the checks. Infrastructure or invalid-patch failures do not authorize repairs. Failed, missing, skipped, or flaky browser results never satisfy the publication gate; the first attempt records its outcome explicitly so a successful repair can complete the workflow successfully.
+5. **Publication/reporting** consumes only the proposal from the successful verification attempt before publishing a branch/PR or recording triage/evidence. This trusted step does not execute candidate application code or tests. Delayed PR metadata gets a bounded read retry while the branch still points at the exact verified commit; a changed branch stops publication immediately.
+6. **Callbacks** record the real run ID, head revision, result, and artifact links. Failed jobs include available verifier errors in the ticket discussion. Duplicate callbacks are idempotent; stale or cancelled jobs cannot overwrite newer ticket state.
 
 Application proposals are limited to the demo and designated test paths. Evidence proposals are limited to `e2e/agent/`. The allowlist and isolated runners enforce these boundaries; prompts alone are insufficient.
 
 Evidence links point to the corresponding GitHub Actions artifact. Reports and recordings are produced by real test execution and downloaded as artifact ZIPs. GitHub may require sign-in for downloads. An artifact's existence is distinct from its tests succeeding.
+
+Completed evidence comments also expose their own run and recording links in the discussion. Completion timestamps and summaries bind each comment to its run; older revisions and changed requests are labelled. A failed run never borrows a previous run's successful recordings.
 
 ## Independent review and human merge
 

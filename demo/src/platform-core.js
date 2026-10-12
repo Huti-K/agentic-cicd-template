@@ -52,6 +52,13 @@ export function filterTickets(tickets, { query='', status='', priority='' } = {}
 export function requestNeedsImplementation(ticket) {
   return !!ticket?.prNumber && (ticket.requestRevision || 0) !== (ticket.implementedRequestRevision || 0);
 }
+export function commentEvidence(comment, jobs = []) {
+  if (comment.authorId !== 'ai' || !['evidence','agent'].includes(comment.kind)) return null;
+  // The completion transaction stamps the job and its discussion event together.
+  // Matching both timestamp and summary avoids attaching another run's recordings.
+  return jobs.find(job => job.kind === 'evidence' && ['succeeded','failed'].includes(job.status)
+    && job.updatedAt && job.updatedAt === comment.createdAt && job.summary === comment.body) || null;
+}
 export function mergeReadiness(detail) {
   const pr = detail?.pullRequest;
   if (!pr) return { ready:false, reason:'An implementation pull request is required.' };

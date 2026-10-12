@@ -38,6 +38,10 @@ Platform API and GitHub responses are stubbed in browser CI for deterministic re
 
 CI runs Node 22 and 24. Browser tests serve the built site on port 4174; development defaults to 4173. Reports are saved in ignored `playwright-report/` and `test-results/` directories.
 
+Relay implementation verification runs with browser retries disabled and writes a [Playwright JSON report](https://playwright.dev/docs/test-reporters#json-reporter) alongside the HTML report. A failed test can trigger one repair of the existing candidate, followed by full isolated verification. Inspect `relay-verification` and, when present, `relay-repair-verification` for the failed project, test, source location, and error. Repair artifacts have separate names, so the publisher cannot accidentally consume the first failing proposal. A second failure stops the workflow and reports details to the ticket; it never loops indefinitely.
+
+`tests/relay-repair.test.js` covers the repair gate, credential separation, bounded diagnostic data, wrong-job/run rejection, browser report integrity, and safe PR metadata retries. Discussion artifact coverage is included in the normal browser suite through `e2e/evidence-thread.spec.js`. Browser authors should follow `.github/codex/relay-browser-testing.md`: account for count-bearing accessible names, sliding navigation, covered overlays, and animated CSS values without weakening the feature assertions.
+
 ## What the regression gate proves
 
 Automated issue fixes must change at least one `tests/demo/**/*.test.js` file. The verifier copies the changed tests onto an archive of the original commit and runs them with a trusted Node reporter. At least one assertion must fail, with no other runner/import/syntax errors. The candidate's full checks must then pass.

@@ -2,7 +2,9 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promise
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { clients } from './client.mjs';
+import { failureSummary } from './verification-feedback.mjs';
 import { allowedPath, assertCurrentPr, evidenceSummary, SHA, validatePatch, validateSnapshot, validateTriage } from './policy.mjs';
 
 const env = process.env;
@@ -112,6 +114,19 @@ export function validateCandidate(value) {
   if (empty && value.job.kind === 'implement' && value.existingBranch && SHA.test(value.sourceSha)) return [];
   return validatePatch(value.job.kind);
 }
+export async function publishedHead(api,value,pr,headSha,{wait=sleep}={}) {
+  // GitHub's PR read model can lag a successful branch update. Only wait while
+  // the branch itself still points at our exact verified commit.
+  for(let attempt=0;attempt<4;attempt++){
+    const ref=await api.github(`git/ref/heads/${value.branch}`);
+    if(ref.object?.sha!==headSha)throw new Error('PR branch changed before dispatch.');
+    if(pr.head?.sha===headSha)return assertCurrentPr(pr,{...value,ticket:{...value.ticket,headSha}});
+    if(attempt===3)break;
+    await wait(500*(attempt+1));
+    pr=await api.github(`pulls/${pr.number}`);
+  }
+  throw new Error('GitHub has not reflected the verified PR head yet. Retry publication.');
+}
 export async function publish(api = clients()) {
   const value = await snapshot();
   await currentJob(api, value);
@@ -148,7 +163,7 @@ export async function publish(api = clients()) {
   const pr = existingPrNumber
     ? await api.github(`pulls/${existingPrNumber}`, { body }, 'PATCH')
     : await api.github('pulls', { head: value.branch, base: value.baseBranch, title: `${value.ticket.id}: ${value.ticket.title}`.replace(/[\r\n]/g, ' ').slice(0, 240), body, draft: false });
-  if (pr.head.sha !== headSha) throw new Error('PR head changed before dispatch.');
+  await publishedHead(api,value,pr,headSha);
   await api.github('actions/workflows/ci.yml/dispatches', { ref: value.branch });
   await api.github('actions/workflows/agent-review.yml/dispatches', { ref: value.baseBranch, inputs: { pr_number: String(pr.number) } });
   await callback(api, { status: 'succeeded', headSha, summary: summary.summary, pullRequest: { number: pr.number, headSha } });
@@ -172,7 +187,9 @@ async function evidenceReport() {
   const manifest = await readJson('.agent-output/evidence-manifest.json');
   if (manifest.headSha !== value.ticket.headSha || manifest.jobId !== value.job.id || !Number.isSafeInteger(manifest.passed) || manifest.passed < 1 || manifest.failed !== 0 || manifest.skipped !== 0 || !manifest.videos?.length) throw new Error('Invalid evidence manifest.');
   const artifacts = await api.github(`actions/runs/${env.GITHUB_RUN_ID}/artifacts?per_page=100`);
-  const artifact = artifacts.artifacts?.find(item => item.name === 'relay-browser-evidence' && !item.expired);
+  const artifactName = env.EVIDENCE_ARTIFACT || 'relay-browser-evidence';
+  if (!['relay-browser-evidence','relay-repair-browser-evidence'].includes(artifactName)) throw new Error('Invalid evidence artifact name.');
+  const artifact = artifacts.artifacts?.find(item => item.name === artifactName && !item.expired);
   if (!artifact) throw new Error('Uploaded browser evidence artifact not found.');
   const url = `${runUrl()}/artifacts/${artifact.id}`;
   await api.github(`statuses/${value.ticket.headSha}`, { state: 'success', context: 'Relay evidence', target_url: runUrl(), description: `${manifest.passed} browser scenarios; video and screenshot artifacts recorded` });
@@ -181,7 +198,11 @@ async function evidenceReport() {
 async function failed() {
   const api = clients();
   // The endpoint validates the job and run. Failure callbacks cannot advance a ticket.
-  await callback(api, { status: 'failed', error: 'Automation did not complete. Open the linked GitHub Actions run for the failed stage, then retry after correcting it.', summary: env.FAILURE_SUMMARY?.slice(0, 1000) || 'One or more isolated automation stages failed.' });
+  let report,stages={};
+  try { report=await readJson('.agent-output/verification.json'); } catch { /* Preparation and infrastructure failures may have no report. */ }
+  try { stages=JSON.parse(env.FAILURE_STAGES||'{}'); } catch { /* Preserve a usable fallback for malformed stage metadata. */ }
+  const summary=failureSummary(report,{jobId:env.JOB_ID,runId:env.GITHUB_RUN_ID,stages});
+  await callback(api, { status: 'failed', error: 'Automation did not complete. Open the linked GitHub Actions run for the failed stage, then retry after correcting it.', summary });
 }
 async function main() {
   if (command === 'prepare') return prepare();
