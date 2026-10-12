@@ -94,6 +94,10 @@ test('public ticket view exposes properties and discussion while protecting main
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#ticket/RLY-1');
+  const sidebar=page.getByRole('complementary',{name:'Workspace navigation'});
+  await expect(sidebar.getByRole('link',{name:'Relay',exact:true})).toHaveCount(1);
+  await expect(sidebar).not.toContainText('THE WAY WORK MOVES');
+  await expect(sidebar).not.toContainText('Relay Studio');
   await expect(page.getByRole('heading', { name: api.detail.ticket.title, exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Description', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Discussion', exact: true })).toBeVisible();

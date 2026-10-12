@@ -3,7 +3,7 @@ import { STATUS, PRIORITY, safeURL, sourceURL, mentionAt, mentionParts, insertMe
 const $ = selector => document.querySelector(selector);
 const inboxPage = document.body.dataset.page === 'inbox';
 const paths = {
-  relay:['M5 20V4h9a5 5 0 0 1 0 10h-3','m12 10 8 10'], overview:['M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'],
+  overview:['M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'],
   tickets:['M5 4h14v16H5z','M9 8h6M9 12h6M9 16h3'], inbox:['M3 4h18v16H3z','m3 5 9 7 9-7'],
   spark:['m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z'], arrow:['M5 12h14','m14 7 5 5-5 5'],
   external:['M14 3h7v7','M21 3 10 14','M10 3H3v18h18v-7'], plus:['M12 5v14M5 12h14'], close:['m6 6 12 12M6 18 18 6'],
@@ -70,14 +70,12 @@ function renderShell(){
   const integrationBanner=$('#integration-banner');integrationBanner.hidden=!!integrationReady;integrationBanner.textContent=integrationReady?'':'GitHub automation is not configured. You can explore the workspace; agent actions need a maintainer to finish the connection.';
   const openCount=totals().open;
   const nav=(name,target,symbol,count)=>el('a',{href:inboxPage?'./#'+target:'#'+target,class:'nav-item'+(!inboxPage&&(route===target||target==='tickets'&&route.startsWith('ticket/'))?' active':''),'aria-current':!inboxPage&&route===target?'page':null,onclick:event=>{event.preventDefault();navigate(target);}},icon(symbol),name,count!==undefined&&el('span',{class:'nav-count'},count));
-  $('#sidebar').replaceChildren(el('a',{href:'./',class:'brand'},el('span',{class:'brand-mark'},icon('relay')),'relay',el('span',{class:'brand-beta'},'workspace')),
-    el('div',{class:'workspace-card'},el('span',{class:'workspace-monogram'},'R'),el('div',{},el('strong',{},'Relay Studio'),el('small',{},'Support → shipped'))),
-    el('p',{class:'side-label'},'WORKSPACE'),el('nav',{'aria-label':'Main navigation',class:'nav-group'},nav('Overview','overview','overview'),nav('Tickets','tickets','tickets',openCount),
-      el('a',{href:'./inbox.html',class:'nav-item'+(inboxPage?' active':''),'aria-current':inboxPage?'page':null},icon('inbox'),'Support inbox',el('span',{class:'nav-mini'},'DEMO'))),
-    el('div',{class:'side-workflow'},el('p',{class:'side-label'},'THE WAY WORK MOVES'),[['spark','Understand the request'],['pr','Build with an agent'],['shield','Review the evidence'],['box','Ship with confidence']].map(([name,text],index)=>el('div',{class:'side-workflow-step'},el('span',{},icon(name)),el('div',{},el('small',{},'0'+(index+1)),text)))),
-    el('div',{class:'sidebar-bottom'},el('div',{class:'sidebar-note'},el('span',{class:'connection-dot'}),integrationReady?'GitHub-connected workflow':'Integration needs setup',el('p',{},integrationReady?'Real runs. Human decisions. Every change has a trail.':'The live integration must be configured before running agents.')),
+  $('#sidebar').replaceChildren(el('a',{href:'./',class:'brand'},'Relay'),
+    el('nav',{'aria-label':'Main navigation',class:'nav-group'},nav('Overview','overview','overview'),nav('Tickets','tickets','tickets',openCount),
+      el('a',{href:'./inbox.html',class:'nav-item'+(inboxPage?' active':''),'aria-current':inboxPage?'page':null},icon('inbox'),'Support inbox')),
+    el('div',{class:'sidebar-bottom'},
       el('a',{href:'./pipeline.html',class:'nav-item'},icon('spark'),'Pipeline dashboard',icon('external')),el('a',{href:'./showcase.html',class:'nav-item'},icon('box'),'Local playground',icon('external')),
-      el('div',{class:'side-user'},el('span',{class:'avatar mint'},session.authenticated?(session.user?.name||'M').slice(0,2).toUpperCase():'↗'),el('div',{},el('strong',{},session.authenticated?session.user?.name||'Maintainer':'Public workspace'),el('small',{},session.authenticated?'Maintainer access':'Explore in read-only mode')))));
+      el('div',{class:'side-user'},icon('people'),el('div',{},el('strong',{},session.authenticated?session.user?.name||'Maintainer':'Public access'),el('small',{},session.authenticated?'Maintainer':'Read only')))));
   $('#view-title').textContent=inboxPage?'Support inbox':route.startsWith('ticket/')?activeTicket||'Ticket':route==='tickets'?'Tickets':'Overview';
   $('#session-actions').replaceChildren(session.authenticated?button('Sign out',signOut,'button small'):button('Sign in',openSignIn,'button small','shield'));
 }
