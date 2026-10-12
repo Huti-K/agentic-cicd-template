@@ -89,7 +89,7 @@ test('an interrupted dispatch becomes resumable after its lease expires without 
   expect(api.requests.find(request=>request.method==='POST').body.action).toBe('triage');
 });
 
-test('public ticket view exposes properties and discussion while protecting maintainer actions', async ({ page }) => {
+test('public ticket view exposes properties and discussion while protecting maintainer actions', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -98,6 +98,17 @@ test('public ticket view exposes properties and discussion while protecting main
   await expect(sidebar.getByRole('link',{name:'Relay',exact:true})).toHaveCount(1);
   await expect(sidebar).not.toContainText('THE WAY WORK MOVES');
   await expect(sidebar).not.toContainText('Relay Studio');
+  const menu = page.getByRole('button', { name: 'Open navigation', exact: true });
+  if (await menu.isVisible()) {
+    await menu.click();
+    await sidebar.locator('a[href="#tickets"]').click();
+    await expect(menu).toHaveAttribute('aria-expanded', 'false');
+    await page.getByRole('button', { name: api.detail.ticket.title, exact: true }).click();
+    await menu.click();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('button', { name: 'Close navigation', exact: true })).toBeHidden();
+  }
   await expect(page.getByRole('heading', { name: api.detail.ticket.title, exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Description', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Discussion', exact: true })).toBeVisible();
@@ -139,7 +150,7 @@ test('issue connection recovery requires maintainer confirmation and never start
   await expect(page.getByRole('button',{name:'Retry GitHub connection',exact:true})).toHaveCount(0);
 });
 
-test('maintainer sign-in handles failure then sends CSRF-protected ticket writes', async ({ page }) => {
+test('maintainer sign-in handles failure then sends CSRF-protected ticket writes', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   await page.goto('/');
   await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
@@ -205,7 +216,7 @@ test('editing preserves a draft when another editor has changed the ticket', asy
   await expect(page.getByText('A carefully written draft that must not disappear.', { exact: true })).toBeVisible();
 });
 
-test('mention suggestions add a contributor and mentioning AI requests a triage run', async ({ page }) => {
+test('mention suggestions add a contributor and mentioning AI requests a triage run', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page);
   await page.goto('/#ticket/RLY-1');
   const composer = page.getByLabel('Write a comment', { exact: true });
@@ -303,7 +314,7 @@ test('feedback launches revision work, while human editing pauses automatic reru
   await expect.poll(() => api.detail.ticket.status).toBe('in_review');
 });
 
-test('review exposes files and video evidence and confirms an exact PR revision before merging', async ({ page }) => {
+test('review exposes files and video evidence and confirms an exact PR revision before merging', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page, { detail: reviewDetailFixture() });
   api.detail.pullRequest.freshness={fetchedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30000).toISOString(),cached:true};
   await page.goto('/#ticket/RLY-1');
@@ -388,7 +399,7 @@ test('feedback rejected during a pending merge preserves its draft and selected 
   expect(api.detail.comments).toHaveLength(1);expect(api.detail.jobs).toHaveLength(1);
 });
 
-test('a simulated support email creates a ticket and starts triage with an idempotency key', async ({ page }) => {
+test('a simulated support email creates a ticket and starts triage with an idempotency key', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page);
   await page.goto('/inbox.html');
   await page.getByRole('button', { name: 'Simulate incoming email', exact: true }).click();
