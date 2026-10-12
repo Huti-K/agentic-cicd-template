@@ -8,7 +8,12 @@ export class GitHub {
       method,headers:{Authorization:'Bearer '+this.env.GITHUB_TOKEN,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'Relay-support-platform','Content-Type':'application/json'},
       body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000),redirect:'manual',
     });
-    if(!response.ok){const status=response.status===404?404:response.status===403||response.status===429?503:502;const error=new HttpError(status,'GitHub could not complete this action (HTTP '+response.status+'). Retry after checking the repository or workflow.','github_error');error.upstreamStatus=response.status;throw error;}
+    if(!response.ok){
+      if(response.status===405&&method==='PUT'&&/^\/pulls\/\d+\/merge$/.test(path)){
+        const error=new HttpError(409,'GitHub blocked the merge. Open the pull request to approve waiting workflows or resolve branch requirements, then retry.','merge_blocked');error.upstreamStatus=405;throw error;
+      }
+      const status=response.status===404?404:response.status===403||response.status===429?503:502;const error=new HttpError(status,'GitHub could not complete this action (HTTP '+response.status+'). Retry after checking the repository or workflow.','github_error');error.upstreamStatus=response.status;throw error;
+    }
     if(method!=='GET'&&this.env.DB)await this.env.DB.prepare('DELETE FROM metadata WHERE key LIKE ?').bind('github-pull:'+this.repository+':%').run();
     return response.status===204?null:response.json();
   }
@@ -33,7 +38,7 @@ export class GitHub {
     assert(Array.isArray(checks.check_runs)&&Array.isArray(status.statuses)&&Array.isArray(files),'Invalid GitHub checks.',502);
     // Cache only fields rendered or checked by Relay, never full patches or
     // unbounded check-run output bodies returned by GitHub.
-    return {pr:{number:pr.number,title:pr.title,state:pr.state,draft:pr.draft,mergeable:pr.mergeable,merged_at:pr.merged_at,merge_commit_sha:pr.merge_commit_sha,head:{sha:pr.head.sha,ref:pr.head.ref,repo:{full_name:pr.head.repo?.full_name}},base:{ref:pr.base?.ref}},
+    return {pr:{number:pr.number,title:pr.title,state:pr.state,draft:pr.draft,mergeable:pr.mergeable,mergeable_state:pr.mergeable_state,merged_at:pr.merged_at,merge_commit_sha:pr.merge_commit_sha,head:{sha:pr.head.sha,ref:pr.head.ref,repo:{full_name:pr.head.repo?.full_name}},base:{ref:pr.base?.ref}},
       checks:{total_count:checks.total_count,check_runs:checks.check_runs.map(({name,status,conclusion})=>({name,status,conclusion}))},
       status:{total_count:status.total_count,statuses:status.statuses.map(({context,state})=>({context,state}))},
       files:files.map(({filename,previous_filename,additions,deletions})=>({filename,previous_filename,additions,deletions}))};
@@ -72,8 +77,13 @@ export class GitHub {
     const evidenceReady=!!latestEvidence&&latestEvidence.status==='succeeded'&&(latestEvidence.requestRevision||0)===requestRevision&&latestEvidence.headSha===pr.head.sha&&latestEvidence.evidence?.length>0;
     const safeFiles=files.length<100&&files.every(f=>allowedAgentPath(f.filename)&&(!f.previous_filename||allowedAgentPath(f.previous_filename)));
     const mergeable=pr.mergeable===true&&pr.state==='open'&&!pr.draft&&pr.base?.ref==='main'&&pr.head?.repo?.full_name===this.repository&&safeFiles;
+    const mergeBlockReason=pr.mergeable_state==='clean'?null:({
+      blocked:'GitHub is blocking this merge. Open the pull request to approve waiting workflows or resolve required checks and reviews.',
+      behind:'Update this pull request with the latest main branch, then rerun checks and evidence before approving.',
+      dirty:'This pull request has merge conflicts. Resolve them and rerun checks and evidence before approving.',
+    }[pr.mergeable_state]||'GitHub has not confirmed that this revision can merge. Check the pull request and refresh.');
     return {number:pr.number,url:'https://github.com/'+this.repository+'/pull/'+pr.number,title:pr.title,headSha:pr.head.sha,branch:pr.head.ref,repository:pr.head.repo?.full_name,baseBranch:pr.base?.ref,state:pr.merged_at?'merged':pr.state,
       mergeCommitSha:pr.merge_commit_sha,checks:normalized,freshness:freshness||{fetchedAt:new Date().toISOString(),cached:false},reviewState:normalized.find(c=>c.name==='AI review')?.conclusion==='success'?'approved':'pending',
-      mergeable,files:files.map(f=>({path:f.filename,additions:f.additions,deletions:f.deletions})),checksReady,evidenceReady,canMerge:mergeable&&checksReady&&evidenceReady};
+      mergeable,mergeBlockReason,files:files.map(f=>({path:f.filename,additions:f.additions,deletions:f.deletions})),checksReady,evidenceReady,canMerge:mergeable&&!mergeBlockReason&&checksReady&&evidenceReady};
   }
 }

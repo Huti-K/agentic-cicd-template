@@ -345,6 +345,11 @@ test('stale PR revisions and missing evidence prevent a false successful merge',
   api.detail.pullRequest.evidenceReady = false;
   await page.reload();
   await expect(page.getByRole('button', { name: 'Approve and merge', exact: true })).toBeDisabled();
+  api.detail.pullRequest.evidenceReady = true;
+  api.detail.pullRequest.mergeBlockReason = 'GitHub is blocking this merge. Open the pull request to approve waiting workflows or resolve required checks and reviews.';
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Approve and merge', exact: true })).toBeDisabled();
+  await expect(page.locator('.merge-gate')).toContainText('Open the pull request to approve waiting workflows');
 });
 
 test('untrusted ticket content is text and unsafe evidence links never execute', async ({ page }) => {
