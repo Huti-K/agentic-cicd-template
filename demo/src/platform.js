@@ -69,12 +69,12 @@ function renderShell(){
   const integrationReady=!workspace||workspace.integration?.github&&workspace.integration?.agents;
   const integrationBanner=$('#integration-banner');integrationBanner.hidden=!!integrationReady;integrationBanner.textContent=integrationReady?'':'GitHub automation is not configured. You can explore the workspace; agent actions need a maintainer to finish the connection.';
   const openCount=totals().open;
-  const nav=(name,target,symbol,count)=>el('a',{href:inboxPage?'./#'+target:'#'+target,class:'nav-item'+(!inboxPage&&(route===target||target==='tickets'&&route.startsWith('ticket/'))?' active':''),'aria-current':!inboxPage&&route===target?'page':null,onclick:event=>{event.preventDefault();navigate(target);}},icon(symbol),name,count!==undefined&&el('span',{class:'nav-count'},count));
+  const nav=(name,target,symbol,count)=>el('a',{href:inboxPage?'./#'+target:'#'+target,class:'nav-item'+(!inboxPage&&(route===target||target==='tickets'&&route.startsWith('ticket/'))?' active':''),'aria-current':!inboxPage&&(route===target||target==='tickets'&&route.startsWith('ticket/'))?'page':null,onclick:event=>{event.preventDefault();navigate(target);}},icon(symbol),name,count!==undefined&&el('span',{class:'nav-count'},count));
   $('#sidebar').replaceChildren(el('a',{href:'./',class:'brand'},'Relay'),
     el('nav',{'aria-label':'Main navigation',class:'nav-group'},nav('Overview','overview','overview'),nav('Tickets','tickets','tickets',openCount),
       el('a',{href:'./inbox.html',class:'nav-item'+(inboxPage?' active':''),'aria-current':inboxPage?'page':null},icon('inbox'),'Support inbox')),
     el('div',{class:'sidebar-bottom'},
-      el('a',{href:'./pipeline.html',class:'nav-item'},icon('spark'),'Pipeline dashboard',icon('external')),el('a',{href:'./showcase.html',class:'nav-item'},icon('box'),'Local playground',icon('external')),
+      el('a',{href:'./pipeline.html',class:'nav-item'},icon('overview'),'Pipeline dashboard',icon('external')),el('a',{href:'./showcase.html',class:'nav-item'},icon('box'),'Local playground',icon('external')),
       el('div',{class:'side-user'},icon('people'),el('div',{},el('strong',{},session.authenticated?session.user?.name||'Maintainer':'Public access'),el('small',{},session.authenticated?'Maintainer':'Read only')))));
   $('#view-title').textContent=inboxPage?'Support inbox':route.startsWith('ticket/')?activeTicket||'Ticket':route==='tickets'?'Tickets':'Overview';
   $('#session-actions').replaceChildren(session.authenticated?button('Sign out',signOut,'button small'):button('Sign in',openSignIn,'button small','shield'));
