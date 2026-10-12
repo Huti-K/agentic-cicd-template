@@ -13,3 +13,5 @@ Add meaningful behavioral tests for the acceptance criteria, including relevant 
 If `existingBranch` is true, a previous run published a commit before its final handoff failed. Inspect that recovered implementation and its tests first. If it already meets all acceptance criteria, leave it unchanged and explain that the isolated verifier should recheck and recover its publication; do not manufacture a change merely to create a diff.
 
 If the task cannot be implemented within the allowed files, explain the blocker in the final summary and do not invent a successful patch. Finish with JSON matching the supplied schema. State what changed and which tests you added, and that execution is deferred to the isolated verifier.
+
+Read `.relay-trusted/.github/codex/relay-browser-testing.md` before writing browser scenarios. Follow its guidance for count-bearing accessible names, mobile drawer interactions, and retrying assertions on animated state. If a failure occurs, the workflow retains your patch and gives one repair attempt its exact verifier diagnostics; never remove checks to claim success.

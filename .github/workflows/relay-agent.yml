@@ -185,6 +185,9 @@ jobs:
     needs: [prepare, agent]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      repairable: ${{ steps.feedback.outputs.repairable }}
+      verified: ${{ steps.feedback.outputs.verified }}
     permissions:
       contents: read
     steps:
@@ -202,10 +205,14 @@ jobs:
           node-version: '24'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: relay-*
+          name: relay-job
           path: .agent-output
-          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-proposal
+          path: .agent-output
       - name: Validate the patch using trusted automation
+        id: validate
         env:
           JOB_KIND: ${{ needs.prepare.outputs.kind }}
         run: |
@@ -213,19 +220,37 @@ jobs:
           node .relay-trusted/scripts/relay/run.mjs validate-patch
       - run: npm ci --ignore-scripts
       - name: Prove existing-code bug regressions on the original source
+        id: regression
+        continue-on-error: true
         if: needs.prepare.outputs.kind == 'implement'
-        run: node .relay-trusted/scripts/relay/run.mjs regression
+        shell: bash
+        run: |
+          set -o pipefail
+          node .relay-trusted/scripts/relay/run.mjs regression 2>&1 | tee .agent-output/check.log
       - name: Run behavioral tests and build on an isolated runner
-        run: npm run check
-      - run: npx playwright install --with-deps chromium
+        id: check
+        continue-on-error: true
+        if: success() && steps.regression.outcome != 'failure'
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee .agent-output/check.log
+      - if: success() && steps.check.outcome == 'success'
+        run: npx playwright install --with-deps chromium
       - name: Check the complete application before publishing implementation
-        if: needs.prepare.outputs.kind == 'implement'
-        run: npm run test:browser
+        id: browser
+        continue-on-error: true
+        if: success() && needs.prepare.outputs.kind == 'implement' && steps.check.outcome == 'success'
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: .agent-output/implementation-results.json
+        run: npm run test:browser -- --reporter=list,html,json --retries=0
       - name: Record independent scenarios with videos and screenshots
-        if: needs.prepare.outputs.kind == 'evidence'
+        id: evidence
+        continue-on-error: true
+        if: success() && needs.prepare.outputs.kind == 'evidence' && steps.check.outcome == 'success'
         run: npx playwright test --config .relay-trusted/scripts/relay/playwright.config.mjs
       - name: Verify actual scenario counts and recordings
-        if: needs.prepare.outputs.kind == 'evidence'
+        if: success() && needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome == 'success'
         run: node .relay-trusted/scripts/relay/run.mjs evidence-manifest
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && needs.prepare.outputs.kind == 'evidence'
@@ -241,7 +266,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: needs.prepare.outputs.kind == 'evidence'
+        if: success() && needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome == 'success'
         with:
           name: relay-evidence-manifest
           path: .agent-output/evidence-manifest.json
@@ -257,9 +282,214 @@ jobs:
             test-results/
           retention-days: 7
 
-  publish:
-    if: needs.prepare.outputs.kind == 'implement'
+      - name: Save exact verifier failures for a bounded repair
+        id: feedback
+        if: always()
+        env:
+          VALIDATE_RESULT: ${{ steps.validate.outcome }}
+          CHECK_RESULT: ${{ steps.check.outcome }}
+          REGRESSION_RESULT: ${{ steps.regression.outcome }}
+          BROWSER_RESULT: ${{ needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome || steps.browser.outcome }}
+        run: node .relay-trusted/scripts/relay/verification-feedback.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: relay-verification
+          path: .agent-output/verification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  repair:
+    if: always() && !cancelled() && needs.verify.result == 'success' && needs.verify.outputs.repairable == 'true'
     needs: [prepare, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .relay-trusted
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-job
+          path: .agent-output
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-proposal
+          path: .agent-output
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-verification
+          path: .agent-output
+      - name: Restore the failed candidate before repairing it
+        env:
+          JOB_KIND: ${{ needs.prepare.outputs.kind }}
+        run: |
+          if [ -s .agent-output/proposed.patch ]; then git apply --index .agent-output/proposed.patch; fi
+          node .relay-trusted/scripts/relay/run.mjs validate-patch
+      - name: Repair only the reported failures in the existing candidate
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .relay-trusted/.github/codex/relay-repair.md
+          codex-args: '["--output-schema", ".relay-trusted/.github/codex/relay-summary.schema.json"]'
+          output-file: .agent-output/summary.json
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+          allow-bots: true
+          model: ${{ vars.CODEX_MODEL }}
+          effort: medium
+          codex-version: ${{ vars.CODEX_VERSION }}
+      # The only artifact leaving this runner is untrusted data. No write/callback token is present.
+      - name: Collect the proposed patch
+        env:
+          RECOVERED_IMPLEMENTATION: ${{ needs.prepare.outputs.recovered }}
+        run: |
+          mkdir -p e2e/agent
+          git add --intent-to-add -- demo tests/demo e2e/agent
+          git diff --binary HEAD > .agent-output/proposed.patch
+          test -s .agent-output/proposed.patch || test "$RECOVERED_IMPLEMENTATION" = true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: relay-repair-proposal
+          path: |
+            .agent-output/proposed.patch
+            .agent-output/summary.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-repair:
+    if: always() && !cancelled() && needs.repair.result == 'success'
+    needs: [prepare, repair]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      repairable: ${{ steps.feedback.outputs.repairable }}
+      verified: ${{ steps.feedback.outputs.verified }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .relay-trusted
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-job
+          path: .agent-output
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-repair-proposal
+          path: .agent-output
+      - name: Validate the patch using trusted automation
+        id: validate
+        env:
+          JOB_KIND: ${{ needs.prepare.outputs.kind }}
+        run: |
+          if [ -s .agent-output/proposed.patch ]; then git apply --index .agent-output/proposed.patch; fi
+          node .relay-trusted/scripts/relay/run.mjs validate-patch
+      - run: npm ci --ignore-scripts
+      - name: Prove existing-code bug regressions on the original source
+        id: regression
+        if: needs.prepare.outputs.kind == 'implement'
+        shell: bash
+        run: |
+          set -o pipefail
+          node .relay-trusted/scripts/relay/run.mjs regression 2>&1 | tee .agent-output/check.log
+      - name: Run behavioral tests and build on an isolated runner
+        id: check
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee .agent-output/check.log
+      - run: npx playwright install --with-deps chromium
+      - name: Check the complete application before publishing implementation
+        id: browser
+        if: needs.prepare.outputs.kind == 'implement'
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: .agent-output/implementation-results.json
+        run: npm run test:browser -- --reporter=list,html,json --retries=0
+      - name: Record independent scenarios with videos and screenshots
+        id: evidence
+        if: needs.prepare.outputs.kind == 'evidence'
+        run: npx playwright test --config .relay-trusted/scripts/relay/playwright.config.mjs
+      - name: Verify actual scenario counts and recordings
+        if: needs.prepare.outputs.kind == 'evidence'
+        run: node .relay-trusted/scripts/relay/run.mjs evidence-manifest
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && needs.prepare.outputs.kind == 'evidence'
+        with:
+          name: relay-repair-browser-evidence
+          path: |
+            .agent-output/browser-report/
+            .agent-output/browser-results/
+            .agent-output/browser-results.json
+            .agent-output/evidence-manifest.json
+            e2e/agent/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.prepare.outputs.kind == 'evidence'
+        with:
+          name: relay-repair-evidence-manifest
+          path: .agent-output/evidence-manifest.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && needs.prepare.outputs.kind == 'implement'
+        with:
+          name: relay-repair-implementation-browser-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - name: Save exact verifier failures for a bounded repair
+        id: feedback
+        if: always()
+        env:
+          VALIDATE_RESULT: ${{ steps.validate.outcome }}
+          CHECK_RESULT: ${{ steps.check.outcome }}
+          REGRESSION_RESULT: ${{ steps.regression.outcome }}
+          BROWSER_RESULT: ${{ needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome || steps.browser.outcome }}
+        run: node .relay-trusted/scripts/relay/verification-feedback.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: relay-repair-verification
+          path: .agent-output/verification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require a fully verified repair
+        if: always()
+        env:
+          VERIFIED: ${{ steps.feedback.outputs.verified }}
+        run: test "$VERIFIED" = true
+
+  publish:
+    if: always() && !cancelled() && needs.prepare.outputs.kind == 'implement' && ((needs.verify.result == 'success' && needs.verify.outputs.verified == 'true') || (needs.verify-repair.result == 'success' && needs.verify-repair.outputs.verified == 'true'))
+    needs: [prepare, verify, verify-repair]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -278,9 +508,12 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: relay-*
+          name: relay-job
           path: .agent-output
-          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.verify-repair.result == 'success' && 'relay-repair-proposal' || 'relay-proposal' }}
+          path: .agent-output
       - name: Revalidate data and publish with an optimistic branch lease
         env:
           RELAY_URL: ${{ vars.RELAY_URL }}
@@ -292,8 +525,8 @@ jobs:
           node .relay-trusted/scripts/relay/run.mjs publish
 
   evidence-report:
-    if: needs.prepare.outputs.kind == 'evidence'
-    needs: [prepare, verify]
+    if: always() && !cancelled() && needs.prepare.outputs.kind == 'evidence' && ((needs.verify.result == 'success' && needs.verify.outputs.verified == 'true') || (needs.verify-repair.result == 'success' && needs.verify-repair.outputs.verified == 'true'))
+    needs: [prepare, verify, verify-repair]
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -312,7 +545,7 @@ jobs:
           path: .agent-output
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: relay-evidence-manifest
+          name: ${{ needs.verify-repair.result == 'success' && 'relay-repair-evidence-manifest' || 'relay-evidence-manifest' }}
           path: .agent-output
       - name: Attach only genuine artifacts for the current PR head
         env:
@@ -320,11 +553,12 @@ jobs:
           RELAY_CALLBACK_SECRET: ${{ secrets.RELAY_CALLBACK_SECRET }}
           GH_TOKEN: ${{ github.token }}
           JOB_ID: ${{ inputs.job_id }}
+          EVIDENCE_ARTIFACT: ${{ needs.verify-repair.result == 'success' && 'relay-repair-browser-evidence' || 'relay-browser-evidence' }}
         run: node scripts/relay/run.mjs evidence-report
 
   failure-report:
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.triage-report.result != 'success' && needs.publish.result != 'success' && needs.evidence-report.result != 'success'
-    needs: [prepare, triage, triage-report, agent, verify, publish, evidence-report]
+    needs: [prepare, triage, triage-report, agent, verify, repair, verify-repair, publish, evidence-report]
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -334,9 +568,15 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: ${{ needs.verify-repair.result == 'failure' && 'relay-repair-verification' || 'relay-verification' }}
+          path: .agent-output
       - name: Report an incomplete run without advancing the ticket
         env:
           RELAY_URL: ${{ vars.RELAY_URL }}
           RELAY_CALLBACK_SECRET: ${{ secrets.RELAY_CALLBACK_SECRET }}
           JOB_ID: ${{ inputs.job_id }}
+          FAILURE_STAGES: ${{ toJSON(needs) }}
         run: node scripts/relay/run.mjs failed
