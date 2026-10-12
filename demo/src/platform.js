@@ -1,4 +1,4 @@
-import { STATUS, PRIORITY, safeURL, sourceURL, mentionAt, mentionParts, insertMention, requestNeedsImplementation, mergeReadiness, createAPI } from './platform-core.js';
+import { STATUS, PRIORITY, descriptionCounterText, safeURL, sourceURL, mentionAt, mentionParts, insertMention, requestNeedsImplementation, mergeReadiness, createAPI } from './platform-core.js';
 
 const $ = selector => document.querySelector(selector);
 const inboxPage = document.body.dataset.page === 'inbox';
@@ -222,6 +222,11 @@ function openIssueRecovery(){
 function openTicketForm(current){
   const isEdit=!!current,formId='ticket-form-',input=(name,value,attrs={})=>el('input',{id:formId+name,name,value:value||'',...attrs});
   const title=input('title',current?.title,{required:true,maxlength:160,autofocus:true,placeholder:'What could be better?'}),description=el('textarea',{id:formId+'description',name:'description',required:true,maxlength:12000,rows:6,placeholder:'Describe the request, current behavior, and what a good outcome looks like.'},current?.description||'');
+  const descriptionCounter=el('p',{id:formId+'description-counter',class:'description-counter','aria-live':'polite','aria-atomic':'true'});
+  description.setAttribute('aria-describedby',descriptionCounter.id);
+  const updateDescriptionCounter=()=>{descriptionCounter.textContent=descriptionCounterText(description.value,description.maxLength);};
+  description.addEventListener('input',updateDescriptionCounter);
+  updateDescriptionCounter();
   const priority=select(formId+'priority',Object.entries(PRIORITY),current?.priority||'medium',{name:'priority'}),assignee=select(formId+'assigneeId',[['','Unassigned'],...people().filter(p=>p.handle!=='ai').map(p=>[p.id,p.name])],current?.assigneeId||'',{name:'assigneeId'}),tagsInput=input('tags',(current?.tags||[]).join(', '),{maxlength:300,placeholder:'customer-feedback, usability'});
   const type=select(formId+'type',[['bug','Bug report'],['feature','Feature request'],['task','Task']],current?.type||'feature',{name:'type',disabled:isEdit});
   const contributors=el('fieldset',{class:'contributor-fieldset'},el('legend',{},'Contributors'),people().map(p=>el('label',{class:'contributor-option'},el('input',{type:'checkbox',name:'contributorIds',value:p.id,checked:(current?.contributorIds||[]).includes(p.id)}),avatar(p.id,true),p.name)));
@@ -229,7 +234,7 @@ function openTicketForm(current){
   const form=el('form',{onsubmit:async event=>{event.preventDefault();submit.disabled=true;errorNode.textContent='';const payload={title:title.value.trim(),description:description.value.trim(),priority:priority.value,assigneeId:assignee.value,tags:[...new Set(tagsInput.value.split(',').map(s=>s.trim()).filter(Boolean))],contributorIds:[...new FormData(form).getAll('contributorIds')]};if(isEdit)payload.version=current.version;else payload.type=type.value;
     try{const result=await api(isEdit?'/api/tickets/'+encodeURIComponent(current.id):'/api/tickets',{method:isEdit?'PATCH':'POST',body:payload});$('#modal').close();detail=result;activeTicket=result.ticket.id;detailSignature=detailStamp(result);await refreshWorkspace(false).catch(error=>banner('Ticket saved. Workspace refresh failed: '+error.message));navigate('ticket/'+result.ticket.id);toast(isEdit?'Ticket updated.':'Ticket created. Mention @ai to start triage.');}
     catch(error){errorNode.textContent=error.message+(error.status===409?' Your draft is still here. Copy any changes you want to keep, then close and reopen the editor to work from the latest ticket.':'');if(error.status===409)await refreshTicket(false);}finally{submit.disabled=false;}}},
-    el('div',{class:'form-fields'},field('Title',formId+'title',title),field('Description',formId+'description',description),el('div',{class:'form-grid'},field('Type',formId+'type',type),field('Priority',formId+'priority',priority),field('Assignee',formId+'assigneeId',assignee),field('Tags (comma separated)',formId+'tags',tagsInput)),contributors),errorNode,
+    el('div',{class:'form-fields'},field('Title',formId+'title',title),field('Description',formId+'description',[description,descriptionCounter]),el('div',{class:'form-grid'},field('Type',formId+'type',type),field('Priority',formId+'priority',priority),field('Assignee',formId+'assigneeId',assignee),field('Tags (comma separated)',formId+'tags',tagsInput)),contributors),errorNode,
     el('div',{class:'dialog-actions'},button('Cancel',()=>$('#modal').close()),submit));
   showModal(isEdit?'Edit ticket':'New ticket',el('p',{class:'modal-description'},isEdit?'Keep the brief useful and bring the right people into the work.':'Give the request a little context. Your team and agents can take it from here.'),form);
 }
