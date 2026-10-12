@@ -57,7 +57,7 @@ export async function verifyCloudflareDeployment({ url, sha, repository, attempt
     try {
       const manifest = await (await request(`/build.json?sha=${sha}&attempt=${attempt}`)).json();
       if (manifest.sha !== sha || manifest.repository !== repository) throw new Error('Cloudflare is serving a different revision.');
-      for (const path of ['/index.html', '/inbox.html', '/platform.css', '/src/platform.js', '/src/platform-core.js']) {
+      for (const path of ['/', '/inbox', '/platform.css', '/src/platform.js', '/src/platform-core.js']) {
         const response = await request(path);
         if (!(await response.text()).trim()) throw new Error(`Empty deployed asset: ${path}`);
       }
