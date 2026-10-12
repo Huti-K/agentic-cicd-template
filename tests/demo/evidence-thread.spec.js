@@ -7,7 +7,7 @@ function fixture(){
   detail.comments.push({id:'result',authorId:'ai',kind:'evidence',body:job.summary,createdAt:job.updatedAt});
   return detail;
 }
-test('completed E2E results expose the run and recording download in the discussion',async({page})=>{
+test('completed E2E results expose the run and recording download in the discussion',{tag:'@mobile'},async({page})=>{
   const detail=fixture();
   const api=await installPlatformAPI(page,{detail,authenticated:false});
   await page.goto('/#ticket/RLY-1');

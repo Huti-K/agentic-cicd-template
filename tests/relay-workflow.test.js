@@ -135,10 +135,24 @@ test('publish/report require isolated verification, trusted automation, and exac
   assert.match(config, /retries: 0/);
   assert.match(config, /forbidOnly: true/);
 });
-test('the nested evidence configuration starts its server in the candidate workspace root', async () => {
-  const { default: config } = await import('../scripts/relay/playwright.config.mjs');
-  assert.equal(config.webServer.cwd, process.cwd());
-  assert.equal(config.testDir, join(process.cwd(), 'e2e/agent'));
+test('evidence records only the requested ticket from the candidate workspace root', async () => {
+  const saved = process.env.RELAY_EVIDENCE_TICKET;
+  try {
+    process.env.RELAY_EVIDENCE_TICKET = 'RLY-4';
+    const { default: config } = await import('../scripts/relay/playwright.config.mjs');
+    assert.equal(config.webServer.cwd, process.cwd());
+    assert.equal(config.testDir, join(process.cwd(), 'e2e/agent'));
+    assert.equal(config.testMatch, 'relay-RLY-4.spec.js');
+    for (const job of ['verify', 'verify-repair']) {
+      assert.equal(workflow.jobs[job].steps.find(step => step.id === 'evidence').env.RELAY_EVIDENCE_TICKET, '${{ inputs.ticket_id }}');
+    }
+    for (const value of ['', '*', '../RLY-4', 'RLY-0']) {
+      process.env.RELAY_EVIDENCE_TICKET = value;
+      await assert.rejects(import(`../scripts/relay/playwright.config.mjs?invalid=${encodeURIComponent(value)}`), /valid RELAY_EVIDENCE_TICKET/);
+    }
+  } finally {
+    saved === undefined ? delete process.env.RELAY_EVIDENCE_TICKET : process.env.RELAY_EVIDENCE_TICKET = saved;
+  }
 });
 
 test('trusted preparation and publisher use job freshness checks and an atomic non-force branch update', async () => {

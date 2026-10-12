@@ -10,7 +10,8 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:4174', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
-    { name: 'mobile', use: { ...devices['Pixel 7'] } },
+    // Desktop covers every scenario; repeat only the core journeys on mobile.
+    { name: 'mobile', grep: /@mobile/, use: { ...devices['Pixel 7'] } },
   ],
   webServer: {
     command: 'node scripts/serve.mjs',
