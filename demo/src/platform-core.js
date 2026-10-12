@@ -65,6 +65,7 @@ export function mergeReadiness(detail) {
   if (pr.state !== 'open') return { ready:false, reason:'This pull request is no longer open.' };
   if (requestNeedsImplementation(detail.ticket)) return { ready:false, reason:'The updated request needs a new implementation before evidence and approval.' };
   if (detail.ticket?.pendingAgent) return { ready:false, reason:'The saved request must be handled before this revision can be approved.' };
+  if (pr.mergeBlockReason) return { ready:false, reason:pr.mergeBlockReason };
   if (!pr.checksReady) return { ready:false, reason:'Waiting for passing checks on the current revision.' };
   if (!pr.evidenceReady) return { ready:false, reason:'Run the evidence agent for this revision before merging.' };
   if (!pr.canMerge) return { ready:false, reason:'An approved independent review and a mergeable revision are required.' };

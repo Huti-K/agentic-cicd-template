@@ -9,6 +9,22 @@ async function reviewTicket(context,changes={}) {
   const store=new Store(api.DB),ticket=await store.update(created.data.ticket,{status:'in_review',prNumber:71,prUrl:'https://github.com/'+REPO+'/pull/71',headSha:PR_SHA,triage:{ready:true},...changes});
   return {api,store,ticket};
 }
+test('a definite GitHub merge rejection leaves the ticket immediately retryable', async context => {
+  const { api, store, ticket } = await reviewTicket(context);
+  const job = await store.createJob(ticket, 'evidence', BASE_SHA);
+  await store.updateJob(job, { status:'succeeded', headSha:PR_SHA, evidence:[{title:'Recordings',headSha:PR_SHA,url:`https://github.com/${REPO}/actions/runs/456/artifacts/789`}] });
+  api.github.failure = { path:'/pulls/71/merge', status:405 };
+  const rejected = await api.request('/api/tickets/RLY-1/actions', {method:'POST',body:{action:'approve-merge',headSha:PR_SHA}});
+  assert.equal(rejected.status, 409);
+  const current = await store.ticket(ticket.id);
+  assert.equal(current.status, 'in_review');
+  assert.equal(current.mergePending, false);
+  assert.match(current.error, /GitHub blocked.*pull request/i);
+  api.github.failure = null;
+  const retry = await api.request('/api/tickets/RLY-1/actions', {method:'POST',body:{action:'approve-merge',headSha:PR_SHA}});
+  assert.equal(retry.status, 200);
+  assert.equal(retry.data.ticket.status, 'merged');
+});
 
 test('an in-flight merge blocks edits and agent/human state transitions while preserving comments',async context=>{
   const {api,ticket}=await reviewTicket(context,{mergePending:true});

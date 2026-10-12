@@ -25,6 +25,19 @@ test('merge readiness requires both verification and independent review on the c
   assert.equal((await github.pull(71, [evidence])).checksReady, false);
   assert.equal((await github.pull(71, [evidence])).canMerge, false);
 });
+test('GitHub merge restrictions block approval even with green checks and current evidence', async () => {
+  const { fixture, github, evidence } = client();
+  for (const state of ['blocked', 'behind', 'dirty', 'unknown', undefined]) {
+    fixture.pull.mergeable_state = state;
+    const pr = await github.pull(71, [evidence]);
+    assert.equal(pr.checksReady, true);
+    assert.equal(pr.evidenceReady, true);
+    assert.equal(pr.canMerge, false, String(state));
+    assert.ok(pr.mergeBlockReason);
+  }
+  fixture.pull.mergeable_state = 'clean';
+  assert.equal((await github.pull(71, [evidence])).canMerge, true);
+});
 
 test('pending or failed checks block merging even when required checks are green', async () => {
   const { fixture, github, evidence } = client();

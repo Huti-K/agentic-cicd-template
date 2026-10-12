@@ -210,7 +210,7 @@ async function performAction(store,github,env,id,input) {
   assert(SHA.test(input.headSha),'Confirm the exact pull request revision.');
   const pr=await github.pull(ticket.prNumber,await store.jobs(id),ticket.requestRevision||0);
   assert(pr.headSha===input.headSha&&pr.headSha===ticket.headSha,'The pull request changed. Review the current revision before merging.',409,'stale_head');
-  assert(pr.canMerge&&pr.branch==='relay/ticket-'+ticket.id,'Merge is blocked. Current-head checks, independent AI review, and successful evidence are required on the ticket branch.',409,'merge_blocked');
+  assert(pr.canMerge&&pr.branch==='relay/ticket-'+ticket.id,pr.mergeBlockReason||'Merge is blocked. Current-head checks, independent AI review, and successful evidence are required on the ticket branch.',409,'merge_blocked');
   ticket=await store.update(ticket,{mergePending:true,mergeStartedAt:now()});
   try{
     const result=await github.call('/pulls/'+ticket.prNumber+'/merge',{method:'PUT',body:{sha:input.headSha,merge_method:'squash',commit_title:ticket.title+' (#'+ticket.prNumber+')'}});
@@ -218,7 +218,13 @@ async function performAction(store,github,env,id,input) {
     const latest=await store.ticket(id);
     await store.update(latest,{status:latest.status==='deployed'&&latest.mergeCommitSha===result.sha?'deployed':'merged',mergePending:false,mergeStartedAt:null,pendingAgent:null,mergeCommitSha:result.sha,error:null});
     await store.comment(id,'Approved and merged PR #'+ticket.prNumber+'. Cloudflare deployment will follow main CI.','huti','event');
-  }catch(error){const latest=await store.ticket(id);if(latest.mergePending)await store.update(latest,{error:'Merge result could not be confirmed. Refresh after a minute to reconcile GitHub. '+error.message});throw error;}
+  }catch(error){
+    const latest=await store.ticket(id);
+    if(latest.mergePending)await store.update(latest,error.upstreamStatus===405
+      ?{mergePending:false,mergeStartedAt:null,error:error.message}
+      :{error:'Merge result could not be confirmed. Refresh after a minute to reconcile GitHub. '+error.message});
+    throw error;
+  }
 }
 async function comment(store,github,env,id,input) {
   const content=text(input.body,8000,'Comment'),kind=input.kind||'comment';

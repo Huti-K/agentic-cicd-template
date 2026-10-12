@@ -36,6 +36,8 @@ test('merge readiness requires current head, checks, evidence, independent appro
   assert.equal(mergeReadiness({pullRequest}).ready,true);
   for(const patch of [{state:'closed'},{checksReady:false},{evidenceReady:false},{canMerge:false},{headSha:'short'}]) assert.equal(mergeReadiness({pullRequest:{...pullRequest,...patch}}).ready,false);
   assert.equal(mergeReadiness({}).ready,false);
+  const blocked={...pullRequest,canMerge:false,mergeBlockReason:'Open the pull request to approve waiting workflows.'};
+  assert.equal(mergeReadiness({pullRequest:blocked}).reason,blocked.mergeBlockReason);
 });
 test('saved agent requests block merge with a clear feedback reason', () => {
   const detail={ticket:{pendingAgent:{id:'request-1'}},pullRequest:{state:'open',headSha:'a'.repeat(40),checksReady:true,evidenceReady:true,canMerge:true}};
