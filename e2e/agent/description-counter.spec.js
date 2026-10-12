@@ -83,6 +83,8 @@ test('fixture-backed edit initializes each ticket independently and saves the ex
   const api = await installPlatformAPI(page);
   api.detail.ticket.description = '  A\r\n😀  ';
   await page.goto('/#ticket/RLY-1');
+  // The nested original request also has .prose; assert only the current description.
+  await expect(page.locator('.description-card > .prose')).toHaveText('  A\n😀  ');
   await page.getByRole('button', { name: 'Edit ticket', exact: true }).click();
   let form = page.getByRole('dialog', { name: 'Edit ticket', exact: true });
   await expect(form.getByLabel('Description', { exact: true })).toHaveValue('  A\n😀  ');
@@ -106,6 +108,7 @@ test('fixture-backed edit initializes each ticket independently and saves the ex
   expect(request.body).not.toHaveProperty('type');
   expect(request.headers['x-csrf-token']).toBe(api.csrfToken);
   await expect(page.getByRole('heading', { name: 'Another ticket', exact: true })).toBeVisible();
+  await expect(page.locator('.description-card > .prose')).toHaveText('Updated\n😀');
   expect(api.detail.ticket.id).toBe('RLY-9');
   await page.getByRole('button', { name: 'Edit ticket', exact: true }).click();
   await expect(counterIn(form)).toHaveText('10 of 12,000 characters used · 11,990 remaining');
