@@ -56,6 +56,18 @@ test('feedback bounds untrusted errors, includes global and flaky failures, and 
   assert.doesNotMatch(failureSummary({...saved,runId:'456'},context),/Verification failed/);
   assert.match(failureSummary(undefined,context),/verify-repair/);
 });
+test('unit and regression failure diagnostics reach the ticket while successful repairs do not repeat resolved errors',()=>{
+  const context={jobId:'job-1',runId:'123',stages:{'verify-repair':{result:'failure'}}};
+  for(const stage of ['check','regression']){
+    const result=verificationReport(job,{validated:'success',[stage]:'failure',log:'Setup output\n\u001b[31mAssertionError: stock must stay nonnegative\u001b[0m\n at tests/demo/stock.test.js:12'});
+    assert.match(result.summary,/stock must stay nonnegative/);
+    assert.match(failureSummary({...result,runId:'123'},context),/stock.test.js:12/);
+    assert.doesNotMatch(result.summary,/\u001b/);
+  }
+  const successful=verificationReport(job,{validated:'success',check:'success',browser:'success',report:{stats:{expected:88,unexpected:0,flaky:0,skipped:0,duration:100}}});
+  const text=failureSummary({...successful,runId:'123'},{...context,stages:{publish:{result:'failure'},'verify-repair':{result:'success'}}});
+  assert.match(text,/publish/);assert.doesNotMatch(text,/Verification failed|stock/);
+});
 
 test('failed verification gets one isolated repair of the existing proposal before publication',async()=>{
   const {jobs}=parse(await readFile('.github/workflows/relay-agent.yml','utf8'));
@@ -81,6 +93,8 @@ test('failed verification gets one isolated repair of the existing proposal befo
   assert.match(rejection.if,/steps.feedback.outputs.verified != 'true' && steps.feedback.outputs.repairable != 'true'/);
   assert.equal(rejection.run,'exit 1');
   assert.match(jobs.publish.steps.find(step=>step.with?.name?.includes('relay-repair-proposal')).with.name,/needs.verify-repair.result == 'success'/);
+  const latestReport=jobs['failure-report'].steps.find(step=>step.with?.name?.includes('relay-repair-verification'));
+  assert.match(latestReport.with.name,/needs.verify-repair.result != 'skipped'/,'A successful repair followed by a publication failure must not download resolved initial failures.');
   for(const name of ['publish','evidence-report']){
     assert.ok(jobs[name].needs.includes('verify-repair'));
     assert.match(jobs[name].if,/needs.verify.outputs.verified == 'true'/);

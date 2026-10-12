@@ -27,7 +27,8 @@ export function verificationReport(job,{check='',browser='',regression='',valida
   if(browser==='success'){
     try{evidenceSummary(report);reportValid=true;}catch(error){failed.push('browser report');failures.push({title:'Browser report validation',error:clean(error.message)});}
   }
-  const summary=failed.length?`Verification failed: ${failed.join(', ')}.\n`+failures.slice(0,4).map(f=>`${f.file||''}:${f.line||''} [${f.project||'runner'}] ${f.title}\n${f.error}`).join('\n\n'):'Verification completed without a repairable test failure.';
+  const checkExcerpt=failed.some(stage=>['checks','regression'].includes(stage))?clean(log.slice(-2000),2000):'';
+  const summary=failed.length?`Verification failed: ${failed.join(', ')}.\n`+[checkExcerpt,...failures.slice(0,4).map(f=>`${f.file||''}:${f.line||''} [${f.project||'runner'}] ${f.title}\n${f.error}`)].filter(Boolean).join('\n\n'):'Verification completed without a repairable test failure.';
   return {jobId:job.job.id,sourceSha:job.sourceSha,kind:job.job.kind,runId:String(process.env.GITHUB_RUN_ID||''),repairable:validated==='success'&&failed.some(stage=>['checks','browser','regression'].includes(stage)),verified:validated==='success'&&check==='success'&&browser==='success'&&regression!=='failure'&&reportValid,failed,failures,summary:clean(summary,3500),log:clean(log.slice(-8000),8000)};
 }
 export function failureSummary(report,{jobId,runId,stages={}}){
