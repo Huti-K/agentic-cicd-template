@@ -94,6 +94,11 @@ test('failed verification gets one isolated repair of the existing proposal befo
   assert.equal(rejection.run,'exit 1');
   assert.match(jobs.publish.steps.find(step=>step.with?.name?.includes('relay-repair-proposal')).with.name,/needs.verify-repair.result == 'success'/);
   const latestReport=jobs['failure-report'].steps.find(step=>step.with?.name?.includes('relay-repair-verification'));
+  assert.equal(latestReport.if,"(needs.verify-repair.result != 'skipped' && needs.verify-repair.outputs.diagnostics != '') || (needs.verify-repair.result == 'skipped' && needs.verify.outputs.diagnostics != '')",'Triage and pre-upload failures have no verification artifact to download.');
+  for(const name of ['verify','verify-repair']) {
+    assert.equal(jobs[name].outputs.diagnostics,'${{ steps.diagnostics.outputs.artifact-id }}');
+    assert.ok(jobs[name].steps.find(step=>step.id==='diagnostics').uses.startsWith('actions/upload-artifact@'));
+  }
   assert.match(latestReport.with.name,/needs.verify-repair.result != 'skipped'/,'A successful repair followed by a publication failure must not download resolved initial failures.');
   for(const name of ['publish','evidence-report']){
     assert.ok(jobs[name].needs.includes('verify-repair'));
