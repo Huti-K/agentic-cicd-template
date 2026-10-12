@@ -21,6 +21,11 @@ test('invalid ticket properties are clean 400 errors, including malformed contri
   for (const properties of [{ title: '' }, { description: '' }, { title: 'x'.repeat(161) }, { type: 'unknown' }, { priority: 'critical' }, { tags: 'support' }, { tags: [null] }, { assigneeId: 'ai' }, { assigneeId: 'unknown' }, { contributorIds: {} }, { contributorIds: 'huti' }, { contributorIds: [null] }]) {
     assert.throws(() => ticketInput({ ...validTicket(), ...properties }), badRequest, JSON.stringify(properties));
   }
+  for (const field of ['type', 'priority', 'assigneeId']) for (const value of [null, false, 0]) {
+    const previous = validTicket(), before = structuredClone(previous);
+    assert.throws(() => ticketInput({ [field]: value }, previous), badRequest);
+    assert.deepEqual(previous, before);
+  }
 });
 
 test('ticket identifiers cannot escape storage queries or alias numeric identifiers', () => {
@@ -49,6 +54,9 @@ test('evidence must match the exact PR head and artifact run in the configured r
     assert.throws(() => evidenceResult([{ ...entry, ...changes }], repo, sha, run), badRequest, JSON.stringify(changes));
   }
   assert.throws(() => evidenceResult([null], repo, sha, run), badRequest);
+  for (const suffix of ['', 'not-an-artifact', '0', '456/extra']) {
+    assert.throws(() => evidenceResult([{ ...entry, url: `https://github.com/${repo}/actions/runs/${run}/artifacts/${suffix}` }], repo, sha, run), badRequest);
+  }
 });
 
 test('agent patch paths cannot edit automation, secrets, dependencies or escape allowed folders', () => {

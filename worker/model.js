@@ -30,7 +30,7 @@ export function ticketInput(input,previous) {
   assert(input&&typeof input==='object'&&!Array.isArray(input),'Supply ticket properties.');
   const data={...previous,...input};
   const title=text(data.title,160,'Title'),description=text(data.description,12000,'Description');
-  const type=data.type||'task',priority=data.priority||'medium',assigneeId=data.assigneeId||'';
+  const type=data.type===undefined?'task':data.type,priority=data.priority===undefined?'medium':data.priority,assigneeId=data.assigneeId===undefined?'':data.assigneeId;
   assert(['bug','feature','task'].includes(type),'Choose a valid ticket type.');
   assert(PRIORITIES.includes(priority),'Choose a valid priority.');
   assert(assigneeId===''||PEOPLE.some(p=>p.id===assigneeId&&p.id!=='ai'),'Choose a human assignee.');
@@ -64,7 +64,8 @@ export function evidenceResult(entries,repository,headSha,runId) {
     assert(item&&typeof item==='object','Invalid evidence record.');
     assert(['report','video','screenshot','artifact'].includes(item.kind),'Unknown evidence type.');
     let url;try{url=new URL(item.url);}catch{throw new HttpError(400,'Invalid evidence URL.','invalid_input');}
-    assert(url.origin==='https://github.com'&&url.pathname.startsWith('/'+repository+'/actions/runs/'+runId+'/artifacts/')&&!url.username&&!url.password,'Evidence must link to this workflow run’s GitHub artifacts.');
+    const prefix='/'+repository+'/actions/runs/'+runId+'/artifacts/';
+    assert(url.origin==='https://github.com'&&url.pathname.startsWith(prefix)&&/^[1-9][0-9]*$/.test(url.pathname.slice(prefix.length))&&!url.username&&!url.password,'Evidence must link to this workflow run’s GitHub artifacts.');
     assert(item.headSha===headSha,'Evidence revision does not match the job.');
     return {id:crypto.randomUUID(),kind:'artifact',title:text(item.title,160,'Evidence title'),url:url.href,headSha};
   });
