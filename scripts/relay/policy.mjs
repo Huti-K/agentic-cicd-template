@@ -38,13 +38,17 @@ export function validateTriage(result, paths) {
   if (!result || !text(result.summary, 1500) || !text(result.description, 10000) || typeof result.ready !== 'boolean'
     || !Array.isArray(result.acceptanceCriteria) || result.acceptanceCriteria.length < 1 || result.acceptanceCriteria.length > 12
     || result.acceptanceCriteria.some(item => !text(item, 800))) throw new Error('Invalid triage description or acceptance criteria.');
+  const references = {};
   for (const key of ['files', 'documentation']) {
     if (!Array.isArray(result[key]) || result[key].length > 12) throw new Error('Invalid triage references.');
-    for (const reference of result[key]) {
-      if (!reference || !known.has(reference.path) || !text(reference.reason, 600)) throw new Error('Triage references must name actual repository files.');
-    }
+    references[key] = result[key].map(reference => {
+      // The agent also reads the trusted checkout. Store repository paths, never runner-local aliases.
+      const path = typeof reference?.path === 'string' ? reference.path.replace(/^\.relay-trusted\//, '') : undefined;
+      if (!known.has(path) || !text(reference.reason, 600)) throw new Error('Triage references must name actual repository files.');
+      return { path, reason: reference.reason };
+    });
   }
-  return { summary: result.summary, description: result.description, acceptanceCriteria: result.acceptanceCriteria, files: result.files, documentation: result.documentation, ready: result.ready };
+  return { summary: result.summary, description: result.description, acceptanceCriteria: result.acceptanceCriteria, ...references, ready: result.ready };
 }
 export function validateSnapshot(value, expected) {
   if (!value || value.repository !== expected.repository || !value.job || !value.ticket

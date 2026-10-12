@@ -188,6 +188,7 @@ jobs:
     outputs:
       repairable: ${{ steps.feedback.outputs.repairable }}
       verified: ${{ steps.feedback.outputs.verified }}
+      diagnostics: ${{ steps.diagnostics.outputs.artifact-id }}
     permissions:
       contents: read
     steps:
@@ -294,6 +295,7 @@ jobs:
           BROWSER_RESULT: ${{ needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome || steps.browser.outcome }}
         run: node .relay-trusted/scripts/relay/verification-feedback.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: diagnostics
         if: always()
         with:
           name: relay-verification
@@ -381,6 +383,7 @@ jobs:
     outputs:
       repairable: ${{ steps.feedback.outputs.repairable }}
       verified: ${{ steps.feedback.outputs.verified }}
+      diagnostics: ${{ steps.diagnostics.outputs.artifact-id }}
     permissions:
       contents: read
     steps:
@@ -481,6 +484,7 @@ jobs:
           BROWSER_RESULT: ${{ needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome || steps.browser.outcome }}
         run: node .relay-trusted/scripts/relay/verification-feedback.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: diagnostics
         if: always()
         with:
           name: relay-repair-verification
@@ -578,6 +582,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
+        if: (needs.verify-repair.result != 'skipped' && needs.verify-repair.outputs.diagnostics != '') || (needs.verify-repair.result == 'skipped' && needs.verify.outputs.diagnostics != '')
         with:
           name: ${{ needs.verify-repair.result != 'skipped' && 'relay-repair-verification' || 'relay-verification' }}
           path: .agent-output

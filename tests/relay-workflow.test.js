@@ -34,6 +34,17 @@ test('triage only attaches actual repository paths and complete measurable outco
   assert.deepEqual(validateTriage(result, ['demo/src/platform.js', 'README.md']), result);
   for (const value of [{ ...result, files: [{ path: '../../secret', reason: 'Read it.' }] }, { ...result, description: '' }, { ...result, ready: 'true' }, { ...result, acceptanceCriteria: [] }, { ...result, documentation: [{ path: 'missing.md', reason: 'Invented.' }] }]) assert.throws(() => validateTriage(value, ['demo/src/platform.js', 'README.md']));
 });
+test('triage maps trusted checkout references to existing repository files without accepting invented paths', () => {
+  const reference = { path: '.relay-trusted/AGENTS.md', reason: 'Trusted implementation scope.' };
+  const result = { summary: 'Use red accents.', description: 'Update the shared browser palette.', ready: true, acceptanceCriteria: ['The primary action is red.'], files: [], documentation: [reference] };
+  let triage;
+  assert.doesNotThrow(() => { triage = validateTriage(result, ['AGENTS.md']); });
+  assert.deepEqual(triage.documentation, [{ ...reference, path: 'AGENTS.md' }]);
+  assert.equal(result.documentation[0].path, '.relay-trusted/AGENTS.md');
+  for (const path of ['.relay-trusted/missing.md', '.relay-trusted/../AGENTS.md', 'https://example.test/AGENTS.md', '/AGENTS.md']) {
+    assert.throws(() => validateTriage({ ...result, documentation: [{ ...reference, path }] }, ['AGENTS.md']), /actual repository files/);
+  }
+});
 test('snapshots reject stale, cross-repository, mismatched, and arbitrary branch work', () => {
   const value = fixture();
   assert.equal(validateSnapshot(value, expected()), value);
