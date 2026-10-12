@@ -300,6 +300,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Reject incomplete verification without a repairable candidate
+        if: always() && steps.feedback.outputs.verified != 'true' && steps.feedback.outputs.repairable != 'true'
+        run: exit 1
+
   repair:
     if: always() && !cancelled() && needs.verify.result == 'success' && needs.verify.outputs.repairable == 'true'
     needs: [prepare, verify]

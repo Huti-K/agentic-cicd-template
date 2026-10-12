@@ -77,6 +77,9 @@ test('failed verification gets one isolated repair of the existing proposal befo
     assert.equal(jobs['verify-repair'].steps.find(step=>step.id===id)['continue-on-error'],undefined);
   }
   assert.match(jobs.verify.steps.find(step=>step.id==='browser').run,/--retries=0/);
+  const rejection=jobs.verify.steps.find(step=>step.name==='Reject incomplete verification without a repairable candidate');
+  assert.match(rejection.if,/steps.feedback.outputs.verified != 'true' && steps.feedback.outputs.repairable != 'true'/);
+  assert.equal(rejection.run,'exit 1');
   assert.match(jobs.publish.steps.find(step=>step.with?.name?.includes('relay-repair-proposal')).with.name,/needs.verify-repair.result == 'success'/);
   for(const name of ['publish','evidence-report']){
     assert.ok(jobs[name].needs.includes('verify-repair'));
