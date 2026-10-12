@@ -1,6 +1,22 @@
 export const STATUS = { new:'New', triaging:'Triaging', ready:'Ready to build', implementing:'Implementing', in_review:'In review', human_edit:'Human editing', merged:'Merged', deployed:'Deployed', failed:'Needs attention' };
 export const PRIORITY = { urgent:'Urgent', high:'High', medium:'Medium', low:'Low' };
 
+export async function copyTicketLink(ticketId, { location = globalThis.location, clipboard = globalThis.navigator?.clipboard, announce = () => {} } = {}) {
+  try {
+    if (typeof clipboard?.writeText !== 'function') throw new Error('Clipboard unavailable');
+    const url = new URL(location.origin);
+    url.pathname = location.pathname;
+    url.hash = 'ticket/' + encodeURIComponent(ticketId);
+    announce('Copying ticket link for ' + ticketId + '…');
+    await clipboard.writeText(url.href);
+    announce('Ticket link copied for ' + ticketId + '.');
+    return true;
+  } catch {
+    announce('Automatic copying is unavailable or was denied. Copy the ticket URL from the address bar instead.', true);
+    return false;
+  }
+}
+
 export function safeURL(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; }
 }
