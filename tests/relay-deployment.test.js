@@ -46,22 +46,26 @@ test('downloaded site artifact must have the exact commit, repository and CI pro
 function publicFetcher({ manifestSha = sha, integrations = true, authenticated = false, emptyAsset, apiStatus = 200 } = {}) {
   return async url => {
     const path = url.pathname;
+    if (path === '/index.html' || path === '/inbox.html') return new Response(null, { status: 307, headers: { Location: path === '/index.html' ? '/' : '/inbox' } });
     if (path === '/build.json') return Response.json({ sha: manifestSha, repository });
     if (path === '/api/session') return Response.json({ authenticated, user: authenticated ? { id: 'admin' } : null }, { status: apiStatus });
     if (path === '/api/workspace') return Response.json({ repository, people: [], tickets: [], integration: { github: integrations, agents: integrations } });
     return new Response(path === emptyAsset ? '' : 'deployed asset');
   };
 }
-test('deployed verification checks the actual revision, core UI assets and unauthenticated database API', async () => {
+test('deployed verification uses canonical HTML routes and checks the revision, assets and public API', async () => {
   const seen = [];
   const fetcher = publicFetcher();
-  assert.deepEqual(await verifyCloudflareDeployment({ url: 'https://relay.example', sha, repository, attempts: 1,
+  let result;
+  await assert.doesNotReject(async () => { result = await verifyCloudflareDeployment({ url: 'https://relay.example', sha, repository, attempts: 1,
     fetcher: async (url, options) => { seen.push(url.pathname); assert.equal(options.redirect, 'error'); assert.equal(options.cache, 'no-store'); assert.equal(options.headers, undefined); return fetcher(url, options); },
-  }), { sha, url: 'https://relay.example', repository });
+  }); });
+  assert.deepEqual(result, { sha, url: 'https://relay.example', repository });
   assert.ok(seen.includes('/api/session'));
   assert.ok(seen.includes('/api/workspace'));
   assert.ok(seen.includes('/src/platform-core.js'));
-  for (const options of [{ manifestSha: oldSha }, { integrations: false }, { authenticated: true }, { emptyAsset: '/inbox.html' }, { apiStatus: 503 }]) await assert.rejects(verifyCloudflareDeployment({ url: 'https://relay.example', sha, repository, attempts: 1, fetcher: publicFetcher(options) }));
+  assert.ok(seen.includes('/')); assert.ok(seen.includes('/inbox'));
+  for (const options of [{ manifestSha: oldSha }, { integrations: false }, { authenticated: true }, { emptyAsset: '/inbox' }, { apiStatus: 503 }]) await assert.rejects(verifyCloudflareDeployment({ url: 'https://relay.example', sha, repository, attempts: 1, fetcher: publicFetcher(options) }));
   for (const url of ['http://relay.example', 'https://secret@relay.example', 'https://relay.example?token=secret']) await assert.rejects(verifyCloudflareDeployment({ url, sha, repository, attempts: 1, fetcher }));
 });
 test('deployment verification retries propagation delays and fails after its bounded attempts', async () => {
