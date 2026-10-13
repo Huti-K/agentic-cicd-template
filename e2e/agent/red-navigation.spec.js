@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { installPlatformAPI } from '../helpers/platform-api.js';
 
-// Fixture-backed RLY-5 navigation coverage with the RLY-7 green palette; no live services or mutations.
+// Fixture-backed RLY-5 navigation coverage with the RLY-8 orange palette; no live services or mutations.
 async function withinViewport(page, locator) {
   await expect(locator).toBeVisible();
   await expect(async () => {
@@ -14,7 +14,7 @@ async function withinViewport(page, locator) {
   }).toPass({ timeout: 3000 });
 }
 
-test('fixture-backed green flat navigation keeps destinations, access and mobile dismissal working', { tag: '@mobile' }, async ({ page }) => {
+test('fixture-backed orange flat navigation keeps destinations, access and mobile dismissal working', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   await page.goto('/index.html');
   const menu = page.getByRole('button', { name: 'Open navigation', exact: true });
@@ -35,7 +35,7 @@ test('fixture-backed green flat navigation keeps destinations, access and mobile
     }
   };
   await withinViewport(page, page.getByRole('button', { name: 'New ticket', exact: true }));
-  await expect(page.getByRole('button', { name: 'New ticket', exact: true })).toHaveCSS('background-color', 'rgb(22, 101, 52)');
+  await expect(page.getByRole('button', { name: 'New ticket', exact: true })).toHaveCSS('background-color', 'rgb(154, 52, 18)');
   await withinViewport(page, page.locator('#session-actions').getByRole('button', { name: 'Sign in', exact: true }));
   await openMenu();
   const sidebar = page.locator('#sidebar');
@@ -53,10 +53,10 @@ test('fixture-backed green flat navigation keeps destinations, access and mobile
   }
   const active = sidebar.locator('.nav-item.active');
   await expect(active).toHaveAttribute('aria-current', 'page');
-  await expect(active).toHaveCSS('background-color', 'rgb(220, 252, 231)');
-  await expect(active).toHaveCSS('border-left-color', 'rgb(22, 101, 52)');
-  await expect(active).toHaveCSS('color', 'rgb(22, 101, 52)');
-  await expect(active.locator('svg')).toHaveCSS('color', 'rgb(22, 101, 52)');
+  await expect(active).toHaveCSS('background-color', 'rgb(255, 237, 213)');
+  await expect(active).toHaveCSS('border-left-color', 'rgb(154, 52, 18)');
+  await expect(active).toHaveCSS('color', 'rgb(154, 52, 18)');
+  await expect(active.locator('svg')).toHaveCSS('color', 'rgb(154, 52, 18)');
   // The dashboard shares the conventional four-panel Overview icon.
   const dashboardIcon = sidebar.getByRole('link', { name: 'Pipeline dashboard', exact: true }).locator('svg').first();
   await expect(dashboardIcon.locator('path')).toHaveAttribute('d', await sidebar.locator('a[href="#overview"] svg path').getAttribute('d'));
@@ -82,7 +82,7 @@ test('fixture-backed green flat navigation keeps destinations, access and mobile
   await sidebar.getByRole('link', { name: 'Support inbox', exact: true }).click();
   await expect(page).toHaveURL(/\/inbox.html$/);
   await collapsed();
-  await expect(page.getByRole('button', { name: 'Simulate incoming email', exact: true })).toHaveCSS('background-color', 'rgb(22, 101, 52)');
+  await expect(page.getByRole('button', { name: 'Simulate incoming email', exact: true })).toHaveCSS('background-color', 'rgb(154, 52, 18)');
 
   api.authenticated = true;
   await page.reload();
