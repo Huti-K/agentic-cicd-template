@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { clients } from './client.mjs';
+import { createMediaManifest, publishMedia } from './media.mjs';
 import { failureSummary } from './verification-feedback.mjs';
 import { allowedPath, assertCurrentPr, evidenceSummary, SHA, validatePatch, validateSnapshot, validateTriage } from './policy.mjs';
 
@@ -182,7 +183,7 @@ async function manifest() {
   const screenshots = paths.filter(path => path.endsWith('.png'));
   if (!videos.length || !screenshots.length) throw new Error('Evidence is missing recorded video or screenshots.');
   if (!SHA.test(value.sourceSha) || value.sourceSha !== value.ticket.headSha) throw new Error('Evidence is not for the queued PR head.');
-  await saveJson('.agent-output/evidence-manifest.json', { headSha: value.sourceSha, jobId: value.job.id, mode: 'fixture-backed-browser', ...counts, videos, screenshots });
+  await saveJson('.agent-output/evidence-manifest.json', { headSha: value.sourceSha, jobId: value.job.id, mode: 'fixture-backed-browser', ...counts, videos, screenshots, recordings:await createMediaManifest(report) });
 }
 async function evidenceReport() {
   const api = clients();
@@ -196,8 +197,10 @@ async function evidenceReport() {
   const artifact = artifacts.artifacts?.find(item => item.name === artifactName && !item.expired);
   if (!artifact) throw new Error('Uploaded browser evidence artifact not found.');
   const url = `${runUrl()}/artifacts/${artifact.id}`;
+  const media = await publishMedia(api,value,manifest);
+  await currentJob(api,value);
   await api.github(`statuses/${value.ticket.headSha}`, { state: 'success', context: 'Relay evidence', target_url: runUrl(), description: `${manifest.passed} browser scenarios; video and screenshot artifacts recorded` });
-  await callback(api, { status: 'succeeded', headSha: value.ticket.headSha, summary: `${manifest.passed} fixture-backed browser scenarios passed on the exact PR head. Videos, screenshots, traces, and the HTML report are attached.`, evidence: [{ kind: 'artifact', title: 'Browser report, videos, screenshots & generated scenarios (ZIP)', url, headSha: value.ticket.headSha }] });
+  await callback(api, { status: 'succeeded', headSha: value.ticket.headSha, summary: `${manifest.passed} fixture-backed browser scenarios passed on the exact PR head. Play the recordings below; the full report is also attached.`, media, evidence: [{ kind: 'artifact', title: 'Browser report, videos, screenshots & generated scenarios (ZIP)', url, headSha: value.ticket.headSha }] });
 }
 async function failed() {
   const api = clients();

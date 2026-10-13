@@ -256,6 +256,14 @@ jobs:
         if: success() && needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome == 'success'
         run: node .relay-trusted/scripts/relay/run.mjs evidence-manifest
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: success() && needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome == 'success'
+        with:
+          name: relay-playback-media
+          path: .agent-output/recorded-media/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && needs.prepare.outputs.kind == 'evidence'
         with:
           name: relay-browser-evidence
@@ -445,6 +453,14 @@ jobs:
         if: needs.prepare.outputs.kind == 'evidence'
         run: node .relay-trusted/scripts/relay/run.mjs evidence-manifest
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: success() && needs.prepare.outputs.kind == 'evidence' && steps.evidence.outcome == 'success'
+        with:
+          name: relay-repair-playback-media
+          path: .agent-output/recorded-media/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && needs.prepare.outputs.kind == 'evidence'
         with:
           name: relay-repair-browser-evidence
@@ -542,9 +558,9 @@ jobs:
     if: always() && !cancelled() && needs.prepare.outputs.kind == 'evidence' && ((needs.verify.result == 'success' && needs.verify.outputs.verified == 'true') || (needs.verify-repair.result == 'success' && needs.verify-repair.outputs.verified == 'true'))
     needs: [prepare, verify, verify-repair]
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     permissions:
-      contents: read
+      contents: write
       pull-requests: read
       actions: read
       statuses: write
@@ -561,6 +577,10 @@ jobs:
         with:
           name: ${{ needs.verify-repair.result == 'success' && 'relay-repair-evidence-manifest' || 'relay-evidence-manifest' }}
           path: .agent-output
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.verify-repair.result == 'success' && 'relay-repair-playback-media' || 'relay-playback-media' }}
+          path: .agent-output/recorded-media
       - name: Attach only genuine artifacts for the current PR head
         env:
           RELAY_URL: ${{ vars.RELAY_URL }}
