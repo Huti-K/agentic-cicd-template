@@ -68,3 +68,10 @@ test('API preserves server failure and conflict status, and rejects unreadable r
   const invalid=createAPI({fetcher:async()=>({ok:true,json:async()=>{throw new Error('HTML');}})});
   await assert.rejects(invalid('/api/workspace'),/unreadable response/);
 });
+
+test('inline media allows only same-origin recording routes',async()=>{
+  const {evidenceMediaURL}=await import('../../demo/src/platform-core.js');
+  const path='/api/evidence/12345678-1234-4234-9234-123456789abc/42.webm';
+  assert.equal(evidenceMediaURL(path,'https://relay.test/'),'https://relay.test'+path);
+  for(const value of ['https://elsewhere.test'+path,'javascript:alert(1)',path+'?token=x','/api/session','//elsewhere.test'+path])assert.equal(evidenceMediaURL(value,'https://relay.test/'),null);
+});

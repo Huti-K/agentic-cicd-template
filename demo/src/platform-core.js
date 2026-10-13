@@ -20,6 +20,11 @@ export async function copyTicketLink(ticketId, { location = globalThis.location,
 export function safeURL(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; }
 }
+export function evidenceMediaURL(value, base = globalThis.location?.href) {
+  try { const url=new URL(value,base),origin=new URL(base).origin;
+    return url.origin===origin&&!url.username&&!url.password&&!url.search&&!url.hash&&/^\/api\/evidence\/[a-f0-9-]{36}\/[1-9][0-9]*\.(webm|png)$/.test(url.pathname)?url.href:null;
+  } catch { return null; }
+}
 export function sourceURL(repository, path, revision = 'main') {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository || '') || !path || path.split('/').some(p => p === '..' || p === '.')) return null;
   return 'https://github.com/' + repository + '/blob/' + encodeURIComponent(revision) + '/' + path.split('/').map(encodeURIComponent).join('/');
