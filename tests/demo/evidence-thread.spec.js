@@ -61,3 +61,39 @@ test('ticket recordings are playable inline with device, revision and honest fai
   await expect(section).toContainText('This recording could not load');
   expect(api.requests.every(request=>request.method==='GET')).toBe(true);
 });
+
+test('recording playback and paused position survive ticket polling',{tag:'@mobile'},async({page})=>{
+  const {readFile}=await import('node:fs/promises');
+  // A small synthetic media fixture tests the player, never used as ticket evidence.
+  const bytes=await readFile('tests/fixtures/playback.webm');
+  const detail=fixture(),url='/api/evidence/12345678-1234-4234-9234-123456789abc/42.webm';
+  const video={kind:'video',assetId:42,title:'Player continuity',device:'desktop',headSha:HEAD_SHA,url};
+  detail.evidence=[video];detail.jobs[0].evidence=[video];
+  const api=await installPlatformAPI(page,{detail,authenticated:false});
+  await page.route('**'+url,route=>route.fulfill({contentType:'video/webm',body:bytes}));
+  await page.goto('/#ticket/RLY-1');
+  const player=page.getByRole('region',{name:'Evidence',exact:true}).locator('video');
+  await player.evaluate(async video=>{video.muted=true;video.loop=true;window.recordingNode=video;await video.play();});
+  await expect.poll(()=>player.evaluate(video=>video.currentTime)).toBeGreaterThan(.15);
+  await player.evaluate(video=>video.pause());
+  const time=await player.evaluate(video=>video.currentTime);
+  const discussionPlayer=page.locator('#comment-list video');
+  await discussionPlayer.evaluate(async video=>{video.muted=true;window.discussionNode=video;await video.play();});
+  await expect.poll(()=>discussionPlayer.evaluate(video=>video.currentTime)).toBeGreaterThan(.15);
+  await discussionPlayer.evaluate(video=>video.pause());
+  api.detail.comments.push({id:'new-comment',authorId:'huti',kind:'comment',body:'Playback remains visible while this comment arrives.',createdAt:'2026-10-13T09:00:00Z'});
+  api.detail.pullRequest.freshness={fetchedAt:'2026-10-13T10:00:00Z',cached:true};
+  const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/tickets/RLY-1');
+  await page.evaluate(()=>window.dispatchEvent(new Event('online')));await refreshed;
+  await expect(page.locator('.pr-card, .detail-card').filter({hasText:'GitHub checked'}).first()).toContainText('GitHub checked');
+  expect(await player.evaluate(video=>video===window.recordingNode)).toBe(true);
+  expect(await player.evaluate(video=>video.currentTime)).toBeCloseTo(time,1);
+  await expect(page.locator('#comment-list')).toContainText('Playback remains visible');
+  expect(await discussionPlayer.evaluate(video=>video===window.discussionNode&&video.currentTime>0)).toBe(true);
+  await player.evaluate(video=>video.play());
+  api.detail.pullRequest.freshness.fetchedAt='2026-10-13T10:01:00Z';
+  const again=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/tickets/RLY-1');
+  await page.evaluate(()=>window.dispatchEvent(new Event('online')));await again;
+  expect(await player.evaluate(video=>video===window.recordingNode&&!video.paused)).toBe(true);
+  await player.evaluate(video=>video.pause());
+});
