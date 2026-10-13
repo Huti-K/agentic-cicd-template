@@ -7,7 +7,7 @@ export default defineConfig({
   timeout: 20_000,
   globalTimeout: 180_000,
   reporter: [['list'], ['html', { open: 'never' }]],
-  use: { baseURL: 'http://127.0.0.1:4174', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+  use: { baseURL: 'http://127.0.0.1:4174', video: 'retain-on-failure', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
     // Desktop covers every scenario; repeat only the core journeys on mobile.

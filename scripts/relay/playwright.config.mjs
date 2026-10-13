@@ -12,7 +12,7 @@ export default defineConfig({
   timeout: 30_000,
   globalTimeout: 180_000,
   reporter: [['list'], ['html', { outputFolder: resolve('.agent-output/browser-report'), open: 'never' }], ['json', { outputFile: resolve('.agent-output/browser-results.json') }]],
-  use: { baseURL: 'http://127.0.0.1:4174', video: 'on', screenshot: 'on', trace: 'on' },
+  use: { baseURL: 'http://127.0.0.1:4174', video: 'on', launchOptions: { slowMo: 150 }, screenshot: 'on', trace: 'on' },
   projects: [{ name: 'desktop', use: { ...devices['Desktop Chrome'] } }, { name: 'mobile', use: { ...devices['Pixel 7'] } }],
   webServer: { command: 'node scripts/serve.mjs', cwd: process.cwd(), env: { SERVE_DIR: 'dist', PORT: '4174' }, url: 'http://127.0.0.1:4174', reuseExistingServer: false },
 });

@@ -1,4 +1,4 @@
-import { STATUS, PRIORITY, copyTicketLink, safeURL, sourceURL, mentionAt, mentionParts, insertMention, requestNeedsImplementation, commentEvidence, mergeReadiness, createAPI } from './platform-core.js';
+import { STATUS, PRIORITY, copyTicketLink, safeURL, evidenceMediaURL, sourceURL, mentionAt, mentionParts, insertMention, requestNeedsImplementation, commentEvidence, mergeReadiness, createAPI } from './platform-core.js';
 
 const $ = selector => document.querySelector(selector);
 const inboxPage = document.body.dataset.page === 'inbox';
@@ -173,13 +173,22 @@ function prSection(){const pr=detail.pullRequest;if(!pr)return detail.ticket.prU
     pr.state==='open'&&el('div',{class:'merge-gate'},button('Approve and merge',()=>requireAuth(openMerge),'button primary','pr',{disabled:busy||!readiness.ready}),el('p',{},readiness.reason)));
 }
 function evidenceItem(item){
-  const href=safeURL(item.url),current=detail.pullRequest?.headSha||detail.ticket.headSha,same=!current||item.headSha===current;
-  const video=href&&item.kind==='video'&&/\.(mp4|webm)(?:\?|$)/i.test(href);
-  return el('article',{class:'evidence-item'},el('div',{class:'evidence-title'},icon(item.kind==='video'?'play':'file'),link(item.title,item.url,'evidence-link')),el('p',{class:'evidence-meta'},item.kind+' · '+(item.headSha||'').slice(0,7),!same&&el('span',{class:'older-revision'},'Earlier revision')),video&&el('video',{controls:true,preload:'none',src:href,'aria-label':item.title}),!href&&el('p',{class:'form-error'},'Evidence link unavailable.'));
+  const media=evidenceMediaURL(item.url),href=media||safeURL(item.url),current=detail.pullRequest?.headSha||detail.ticket.headSha,same=!current||item.headSha===current;
+  const video=item.kind==='video'&&media&&media.endsWith('.webm');
+  const unavailable=el('p',{class:'form-error',hidden:true,role:'status'},'This recording could not load. Try the download link or full report.');
+  const player=video&&el('video',{controls:true,playsinline:true,preload:'none',src:media,poster:evidenceMediaURL(item.poster),'aria-label':item.title,onerror:()=>{unavailable.hidden=false;}});
+  return el('article',{class:'evidence-item'+(video?' evidence-video':'')},el('div',{class:'evidence-title'},icon(video?'play':'file'),el('strong',{},item.title)),
+    video&&el('p',{class:'evidence-meta'},badge('success','Passed'),item.device==='mobile'?'Mobile':'Desktop',' · Recorded browser test · No audio'),
+    player,video&&unavailable,
+    el('p',{class:'evidence-meta'},'Revision '+(item.headSha||'').slice(0,7),!same&&el('span',{class:'older-revision'},'Earlier revision')),
+    href?el('a',{href,class:'evidence-link',target:'_blank',rel:'noopener noreferrer'},video?'Open recording':item.title):el('p',{class:'form-error'},'Evidence link unavailable.'));
 }
-function evidenceHelp(){return el('p',{class:'evidence-help'},'Download the ZIP and open the HTML report or a .webm recording. GitHub may ask you to sign in.');}
-function evidenceSection(){const evidence=detail.evidence||[];
-  return el('section',{class:'detail-card'},paneHeading('Evidence',el('span',{class:'count-pill'},evidence.length)),!evidence.length?el('p',{class:'muted small'},'The evidence agent can write and run end-to-end tests for the current PR. Reports, recordings, and artifacts will appear here.'):evidence.map(evidenceItem),evidence.length>0&&evidenceHelp());
+function evidenceHelp(){return el('p',{class:'evidence-help'},'Recordings use controlled test data and demonstrate the linked PR revision. Download the ZIP for the full report, screenshots and traces. GitHub may ask you to sign in.');}
+function evidenceSection(){const evidence=detail.evidence||[],job=(detail.jobs||[]).find(job=>job.kind==='evidence'),running=job&&['queued','running'].includes(job.status);
+  const current=detail.pullRequest?.headSha||detail.ticket.headSha,hasCurrent=evidence.some(item=>item.kind==='video'&&item.headSha===current);
+  const status=running?'Recording this revision automatically. Videos will appear here when checks finish.':job?.status==='failed'?'Recording failed. Check the run details and use Generate evidence to retry.':!evidence.length?'Videos are generated automatically after implementation. No recording is available yet.':!hasCurrent?'No playable recording for this revision yet. Earlier results remain available below.':null;
+  return el('section',{class:'detail-card evidence-section','aria-label':'Evidence'},paneHeading('Evidence',el('span',{class:'count-pill'},evidence.filter(item=>item.kind==='video').length+' recordings')),
+    status&&el('p',{class:'evidence-help',role:'status'},status),el('div',{class:'evidence-grid'},evidence.map(evidenceItem)),evidence.length>0&&evidenceHelp());
 }
 function commentResults(comment){
   const job=commentEvidence(comment,detail.jobs);if(!job)return null;
@@ -216,7 +225,7 @@ function renderTicket(){
   const draftNode=preserve?composerNode:composer();draftNode.dataset.ticket=t.id;draftNode.dataset.auth=String(session.authenticated);
   // Keep the actual editor node alive when a poll or mutation updates the surrounding ticket.
   const focused=document.activeElement,selection=focused?.id==='comment-body'?[focused.selectionStart,focused.selectionEnd]:null;
-  $('#main-content').replaceChildren(el('div',{id:'ticket-header'},detailHeader()),el('div',{class:'ticket-layout'},el('div',{class:'ticket-main'},descriptionSection(),triageSection(),el('section',{class:'detail-card discussion-card'},paneHeading('Discussion',el('span',{class:'count-pill',id:'comment-count'},(detail.comments||[]).length)),el('div',{id:'comment-list',class:'comment-list'}),draftNode)),el('aside',{class:'ticket-properties','aria-label':'Ticket properties'},propertiesSection(),workflowSection(),prSection(),evidenceSection())));
+  $('#main-content').replaceChildren(el('div',{id:'ticket-header'},detailHeader()),el('div',{class:'ticket-layout'},el('div',{class:'ticket-main'},descriptionSection(),triageSection(),evidenceSection(),el('section',{class:'detail-card discussion-card'},paneHeading('Discussion',el('span',{class:'count-pill',id:'comment-count'},(detail.comments||[]).length)),el('div',{id:'comment-list',class:'comment-list'}),draftNode)),el('aside',{class:'ticket-properties','aria-label':'Ticket properties'},propertiesSection(),workflowSection(),prSection())));
   renderComments();if(preserve&&focused&&draftNode.contains(focused)){focused.focus({preventScroll:true});if(selection)focused.setSelectionRange(...selection);}renderShell();
 }
 async function mutation(path,body,method='POST'){
@@ -273,7 +282,7 @@ function openEmailForm(){
   showModal('Simulate incoming email',el('p',{class:'modal-description'},'Use fictional customer details. This creates a real support ticket and starts a GitHub Actions triage run; it does not send email.'),form);
 }
 async function refreshWorkspace(render=true){const next=await api('/api/workspace'),signature=JSON.stringify(next);workspace=next;if(signature!==workspaceSignature){workspaceSignature=signature;renderShell();if(render&&!activeTicket)renderMain();}return next;}
-async function refreshTicket(showError=true){if(!activeTicket||loadingDetail)return;const id=activeTicket,generation=requestGeneration;try{const next=await api('/api/tickets/'+encodeURIComponent(id));if(id!==activeTicket||generation!==requestGeneration)return;const signature=detailStamp(next);if(signature!==detailSignature){detail=next;detailSignature=signature;renderTicket();}banner('');}catch(error){if(showError&&id===activeTicket)banner('Live updates paused: '+error.message+' Showing the last received ticket.');}}
+async function refreshTicket(showError=true){if(!activeTicket||loadingDetail)return;const id=activeTicket,generation=requestGeneration;try{const next=await api('/api/tickets/'+encodeURIComponent(id));if(id!==activeTicket||generation!==requestGeneration)return;const signature=detailStamp(next);if(signature!==detailSignature){detail=next;if(![...document.querySelectorAll('.evidence-item video')].some(video=>!video.paused&&!video.ended)){detailSignature=signature;renderTicket();}}banner('');}catch(error){if(showError&&id===activeTicket)banner('Live updates paused: '+error.message+' Showing the last received ticket.');}}
 async function refreshInbox(){const next=await api('/api/inbox');messages=next.messages||[];if(inboxPage)renderInbox();}
 async function loadRoute(){
   route=inboxPage?'inbox':location.hash.slice(1)||'overview';requestGeneration++;ticketListGeneration++;clearTimeout(ticketListTimer);const generation=requestGeneration;

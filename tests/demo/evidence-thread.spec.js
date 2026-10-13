@@ -39,3 +39,22 @@ test('older evidence and failed runs remain distinct and unsafe attachments are 
   await expect(results.last().getByRole('link')).toHaveAttribute('href',failed.runUrl);
   expect(await page.evaluate(()=>window.injected)).toBeUndefined();
 });
+
+test('ticket recordings are playable inline with device, revision and honest failure feedback',{tag:'@mobile'},async({page})=>{
+  const detail=fixture(),job=detail.jobs[0],id='12345678-1234-4234-9234-123456789abc';
+  const video={id:'video-1',kind:'video',assetId:42,title:'Copy a ticket link',device:'desktop',headSha:HEAD_SHA,url:'/api/evidence/'+id+'/42.webm',poster:'/api/evidence/'+id+'/43.png'};
+  job.evidence.unshift(video);detail.evidence=[video,...job.evidence.filter(item=>item.kind==='artifact')];
+  const api=await installPlatformAPI(page,{detail,authenticated:false});
+  await page.route('**/api/evidence/**',route=>route.fulfill({status:503,body:'Temporarily unavailable'}));
+  await page.goto('/#ticket/RLY-1');
+  const section=page.getByRole('region',{name:'Evidence',exact:true}),player=section.locator('video');
+  await expect(player).toHaveAttribute('controls','');
+  await expect(player).toHaveAttribute('preload','none');
+  await expect(player).toHaveAttribute('src',new RegExp('/42.webm$'));
+  await expect(section).toContainText('Desktop');await expect(section).toContainText('Passed');
+  await expect(section).toContainText('Revision '+HEAD_SHA.slice(0,7));
+  await expect(section).toContainText('1 recordings');
+  await player.evaluate(video=>{video.load();});
+  await expect(section).toContainText('This recording could not load');
+  expect(api.requests.every(request=>request.method==='GET')).toBe(true);
+});
