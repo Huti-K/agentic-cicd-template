@@ -177,7 +177,7 @@ async function detail(store,github,id,{withPR=true,cache=false}={}) {
       }
     }
   if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&requestImplemented(ticket)&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&!ticket.pendingEvidenceJobId;
-  const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id})));
+  const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id,requestRevision:job.requestRevision||0})));
   return {ticket,comments,jobs:jobs.map(publicJob),evidence,pullRequest,integrationError};
 }
 async function stopForHuman(store,github,ticket) {

@@ -53,7 +53,7 @@ test('ticket recordings are playable inline with device, revision and honest fai
   await expect(player).toHaveAttribute('src',new RegExp('/42.webm$'));
   await expect(section).toContainText('Desktop');await expect(section).toContainText('Passed');
   await expect(section).toContainText('Revision '+HEAD_SHA.slice(0,7));
-  await expect(section).toContainText('1 recordings');
+  await expect(section).toContainText('1 recording');
   await player.evaluate(video=>{video.load();});
   await expect(section).toContainText('This recording could not load');
   expect(api.requests.every(request=>request.method==='GET')).toBe(true);

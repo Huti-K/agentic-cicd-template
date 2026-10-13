@@ -180,14 +180,14 @@ function evidenceItem(item){
   return el('article',{class:'evidence-item'+(video?' evidence-video':'')},el('div',{class:'evidence-title'},icon(video?'play':'file'),el('strong',{},item.title)),
     video&&el('p',{class:'evidence-meta'},badge('success','Passed'),item.device==='mobile'?'Mobile':'Desktop',' · Recorded browser test · No audio'),
     player,video&&unavailable,
-    el('p',{class:'evidence-meta'},'Revision '+(item.headSha||'').slice(0,7),!same&&el('span',{class:'older-revision'},'Earlier revision')),
+    el('p',{class:'evidence-meta'},'Revision '+(item.headSha||'').slice(0,7),!same&&el('span',{class:'older-revision'},'Earlier revision'),(item.requestRevision||0)!==(detail.ticket.requestRevision||0)&&el('span',{class:'older-revision'},'Request changed')),
     href?el('a',{href,class:'evidence-link',target:'_blank',rel:'noopener noreferrer'},video?'Open recording':item.title):el('p',{class:'form-error'},'Evidence link unavailable.'));
 }
 function evidenceHelp(){return el('p',{class:'evidence-help'},'Recordings use controlled test data and demonstrate the linked PR revision. Download the ZIP for the full report, screenshots and traces. GitHub may ask you to sign in.');}
 function evidenceSection(){const evidence=detail.evidence||[],job=(detail.jobs||[]).find(job=>job.kind==='evidence'),running=job&&['queued','running'].includes(job.status);
   const current=detail.pullRequest?.headSha||detail.ticket.headSha,hasCurrent=evidence.some(item=>item.kind==='video'&&item.headSha===current);
   const status=running?'Recording this revision automatically. Videos will appear here when checks finish.':job?.status==='failed'?'Recording failed. Check the run details and use Generate evidence to retry.':!evidence.length?'Videos are generated automatically after implementation. No recording is available yet.':!hasCurrent?'No playable recording for this revision yet. Earlier results remain available below.':null;
-  return el('section',{class:'detail-card evidence-section','aria-label':'Evidence'},paneHeading('Evidence',el('span',{class:'count-pill'},evidence.filter(item=>item.kind==='video').length+' recordings')),
+  return el('section',{class:'detail-card evidence-section','aria-label':'Evidence'},paneHeading('Evidence',el('span',{class:'count-pill'},evidence.filter(item=>item.kind==='video').length+' recording'+(evidence.filter(item=>item.kind==='video').length===1?'':'s'))),
     status&&el('p',{class:'evidence-help',role:'status'},status),el('div',{class:'evidence-grid'},evidence.map(evidenceItem)),evidence.length>0&&evidenceHelp());
 }
 function commentResults(comment){
