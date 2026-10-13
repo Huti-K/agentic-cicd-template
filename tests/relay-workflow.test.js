@@ -133,6 +133,12 @@ test('AI/candidate jobs never receive callback/deployment or GitHub write creden
   }
 });
 test('publish/report require isolated verification, trusted automation, and exact head evidence', async () => {
+  const publisher = workflow.jobs.publish.steps.find(step => step.env?.GH_TOKEN);
+  assert.equal(publisher.env.GH_TOKEN, '${{ secrets.RELAY_PUBLISH_TOKEN }}', 'The Actions token leaves bot-created PR workflows waiting for approval.');
+  assert.deepEqual(workflow.jobs.publish.permissions, { contents:'read' });
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name !== 'publish') assert.doesNotMatch(JSON.stringify(job), /RELAY_PUBLISH_TOKEN/);
+  }
   assert.deepEqual(workflow.jobs.publish.needs, ['prepare', 'verify', 'verify-repair']);
   assert.deepEqual(workflow.jobs['evidence-report'].needs, ['prepare', 'verify', 'verify-repair']);
   const commands = workflow.jobs.publish.steps.map(step => step.run || '').join('\n');
@@ -208,7 +214,7 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     assert.equal(validatePatch('implement').length, 2);
     await writeFile('.agent-output/summary.json', JSON.stringify({ summary: 'Added the requested behavior and its test.' }));
     await publish(api);
-    assert.equal(dispatches.length, 2);
+    assert.equal(dispatches.length, 0, 'Opening a maintainer-authenticated PR starts its normal checks without duplicate dispatches.');
     assert.deepEqual(writes.at(-1).pullRequest, { number: 42, headSha: nextSha });
     assert.equal(writes.at(-1).status, 'succeeded');
     value.ticket.prNumber = 42; value.ticket.headSha = source; value.job.headSha = source;
@@ -224,6 +230,7 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     };
     await publish(api);
     assert.equal(leased, true);
+    assert.equal(dispatches.length, 0, 'A normal branch update starts checks through the synchronize event.');
     current.ticket.status = 'human_edit';
     await assert.rejects(publish(api), /Ticket changed/);
     current = structuredClone(value); current.ticket.description = 'A human refined the feature during the run.';
@@ -249,10 +256,11 @@ test('trusted preparation and publisher use job freshness checks and an atomic n
     api.github = async (path, body) => {
       if (path === 'pulls/42') return { ...prFixture(), head: { ...prFixture().head, sha: source } };
       if (path === 'git/ref/heads/relay/ticket-RLY-1') return {object:{sha:source}};
-      if (path.includes('/dispatches')) return null;
+      if (path.includes('/dispatches')) { dispatches.push({path,body}); return null; }
       throw new Error('Recovered unchanged publication must not create commits: ' + path + ' ' + JSON.stringify(body));
     };
     await publish(api);
+    assert.equal(dispatches.length, 2, 'Unchanged recovered PRs still need explicit checks because they emit no new PR event.');
     assert.deepEqual(writes.at(-1).pullRequest, { number: 42, headSha: source });
   } finally {
     process.chdir(originalDirectory);

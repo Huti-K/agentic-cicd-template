@@ -107,6 +107,7 @@ The deployment operator configures:
 | Worker `MAINTAINER_PASSWORD_HASH` secret | Authenticates the shared maintainer demo account |
 | Worker `GITHUB_TOKEN` secret | Creates/updates issues, dispatches workflows, reads checks, and performs authorized merges |
 | Worker and Actions `RELAY_CALLBACK_SECRET` | Authenticates trusted job and deployment callbacks |
+| Actions `RELAY_PUBLISH_TOKEN` | Maintainer credential for the trusted publisher only; creates/updates PR branches so normal CI and review start without a separate workflow approval. Requires repository contents, pull requests, and Actions writes. Do not use the built-in Actions token as a fallback. |
 | Actions `OPENAI_API_KEY` secret | Enables isolated agent work |
 | Actions Cloudflare deployment credential | Deploys tested main revisions |
 | Repository `RELAY_URL` variable | Directs trusted workflow callbacks to this deployment |

@@ -155,7 +155,7 @@ export async function publish(api = clients()) {
     '### Delivery evidence', '',
     '- The patch was checked on an isolated runner without API credentials.',
     '- Behavioral tests, the application build, and browser checks passed.',
-    '- Independent review and CI are dispatched against this exact commit.',
+    '- Independent review and CI run automatically for this pull request.',
     '- A separate evidence agent will record fixture-backed browser scenarios.', '',
     `[Implementation run](${runUrl()})`, '', 'A maintainer must approve merging from the ticket. No agent merges automatically.',
   ].join('\n');
@@ -164,8 +164,12 @@ export async function publish(api = clients()) {
     ? await api.github(`pulls/${existingPrNumber}`, { body }, 'PATCH')
     : await api.github('pulls', { head: value.branch, base: value.baseBranch, title: `${value.ticket.id}: ${value.ticket.title}`.replace(/[\r\n]/g, ' ').slice(0, 240), body, draft: false });
   await publishedHead(api,value,pr,headSha);
-  await api.github('actions/workflows/ci.yml/dispatches', { ref: value.branch });
-  await api.github('actions/workflows/agent-review.yml/dispatches', { ref: value.baseBranch, inputs: { pr_number: String(pr.number) } });
+  // Maintainer-authenticated PR creation and ref updates trigger normal PR checks.
+  // Recovery without a new commit emits no PR event, so explicitly recheck only that case.
+  if (existingPrNumber && !entries.length) {
+    await api.github('actions/workflows/ci.yml/dispatches', { ref: value.branch });
+    await api.github('actions/workflows/agent-review.yml/dispatches', { ref: value.baseBranch, inputs: { pr_number: String(pr.number) } });
+  }
   await callback(api, { status: 'succeeded', headSha, summary: summary.summary, pullRequest: { number: pr.number, headSha } });
   await output('head_sha', headSha);
 }

@@ -45,6 +45,8 @@ Completed evidence comments also expose their own run and recording links in the
 
 The separate `agent-review.yml` workflow inspects the exact PR head/base using trusted review instructions. Candidate source is read as data and never executed by the reviewer. The reporter validates its structured result, links concrete findings to the reviewed commit, and discards outdated results. Review summaries are advisory agent output, not human approvals.
 
+The trusted publisher uses the step-scoped `RELAY_PUBLISH_TOKEN` maintainer credential to create/update PRs and their branches. This triggers ordinary PR CI and review automatically; GitHub's built-in Actions token would instead leave those PR workflows awaiting a separate approval. New commits do not also dispatch duplicate checks. An unchanged recovered PR receives explicit check dispatches because it emits no new PR event. The credential is never available to editing, review, or candidate-execution jobs. Missing publishing credentials fail explicitly, with no fallback to approval-blocked bot publication.
+
 The Worker derives merge eligibility from live PR state, current checks, independent review, evidence bound to the current head, and mergeability. The maintainer explicitly confirms a head SHA in Relay. Immediately before merging, the backend refreshes and checks that revision again. A new commit invalidates an old approval attempt. No comment, callback, or agent result grants unattended merge authority.
 
 ## CI and Cloudflare deployment
