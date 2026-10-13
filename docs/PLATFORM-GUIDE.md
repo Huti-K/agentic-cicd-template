@@ -64,7 +64,7 @@ Choose **Switch to human editing** when a person needs to change the code or cla
 
 **Approve and merge** is enabled only when the server reports current checks, independent review, evidence, and mergeability ready. The confirmation displays the exact head SHA. **Merge this revision** submits that SHA, and the backend rechecks the live PR before merging. If the PR has changed, review the newer revision and obtain fresh evidence instead of retrying an old approval.
 
-After merge, main CI verifies and deploys the Cloudflare Worker and static application. The deployment callback marks tickets deployed only when their merged changes are included in the verified deployment. Use the manifest and Actions link to inspect a deployment that is still pending or has failed.
+After merge, successful main CI automatically triggers **Deploy Relay to Cloudflare**, which publishes and verifies the Worker and static application. Cloudflare is the sole production deployment path; it has no optional enablement flag and deployment failures fail the workflow. Failed CI and superseded revisions cannot deploy. The deployment callback marks tickets deployed only when their merged changes are included in the verified deployment. Use the manifest and Actions link to inspect a deployment that is still pending or has failed.
 
 ## Simulate an incoming support email
 

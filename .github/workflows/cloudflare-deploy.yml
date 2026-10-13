@@ -41,6 +41,7 @@ jobs:
             await deploymentGate({ github, context, core });
 
   deploy:
+    name: Deploy and verify Cloudflare production
     if: needs.gate.outputs.deploy == 'true'
     needs: gate
     runs-on: ubuntu-latest
