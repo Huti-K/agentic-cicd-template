@@ -505,9 +505,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
-      pull-requests: write
-      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -530,9 +528,13 @@ jobs:
         env:
           RELAY_URL: ${{ vars.RELAY_URL }}
           RELAY_CALLBACK_SECRET: ${{ secrets.RELAY_CALLBACK_SECRET }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELAY_PUBLISH_TOKEN }}
           JOB_ID: ${{ inputs.job_id }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo '::error::RELAY_PUBLISH_TOKEN is missing. Configure the maintainer publishing credential before retrying.'
+            exit 1
+          fi
           if [ -s .agent-output/proposed.patch ]; then git apply --index .agent-output/proposed.patch; fi
           node .relay-trusted/scripts/relay/run.mjs publish
 
