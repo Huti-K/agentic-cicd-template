@@ -59,11 +59,23 @@ export async function publishMedia(api,value,manifest,{env=process.env,fetcher=f
   const assets=[];
   for(const file of files){
     let asset=release.assets?.find(item=>item.name===file.part.file);
-    if(!asset){
+    for(let attempt=0;attempt<3;attempt++){
+      // GitHub may leave a zero-byte starter after a failed upload. Only that
+      // incomplete object is removable; completed assets are immutable here.
+      if(asset?.state==='starter'&&asset.size===0&&Number.isSafeInteger(asset.id)){
+        await api.github('releases/assets/'+asset.id,undefined,'DELETE');asset=null;
+      }
+      if(asset)break;
       const url='https://uploads.github.com/repos/'+repository+'/releases/'+release.id+'/assets?name='+encodeURIComponent(file.part.file);
-      const response=await fetcher(url,{method:'POST',headers:{Authorization:'Bearer '+env.GH_TOKEN,Accept:'application/vnd.github+json','Content-Type':file.type,'X-GitHub-Api-Version':'2022-11-28'},body:file.data,redirect:'error',signal:AbortSignal.timeout(60000)});
-      if(!response.ok)throw Error('Recording upload failed ('+response.status+').');
-      asset=await response.json();
+      try{
+        const response=await fetcher(url,{method:'POST',headers:{Authorization:'Bearer '+env.GH_TOKEN,Accept:'application/vnd.github+json','Content-Type':file.type,'X-GitHub-Api-Version':'2022-11-28'},body:file.data,redirect:'error',signal:AbortSignal.timeout(60000)});
+        if(!response.ok){const error=Error('Recording upload failed ('+response.status+').');error.status=response.status;throw error;}
+        asset=await response.json();break;
+      }catch(error){
+        if(attempt===2||!(error instanceof TypeError||['TimeoutError','AbortError'].includes(error.name)||error.status>=500||error.status===422))throw error;
+        const latest=await api.github('releases/'+release.id+'/assets?per_page=100');
+        asset=latest.find(item=>item.name===file.part.file);
+      }
     }
     if(!Number.isSafeInteger(asset.id)||asset.state!=='uploaded'||asset.digest!==file.part.digest||asset.size!==file.data.length||asset.content_type!==file.type)throw Error('Uploaded recording did not match the verified file.');
     assets.push(asset);

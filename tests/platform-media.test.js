@@ -28,6 +28,18 @@ test('published ticket video is public, seekable and never forwards credentials 
   assert.match(calls[0].url,/\/releases\/assets\/42$/);
   const missing=await app.fetch(new Request('https://relay.test/api/evidence/'+job.id+'/99.webm'),api.env);
   assert.equal(missing.status,404);assert.equal(calls.length,2);
+  const cached=await app.fetch(new Request('https://relay.test'+url,{headers:{Range:'bytes=0-3'}}),api.env);
+  assert.equal(cached.status,206);await cached.arrayBuffer();assert.equal(calls.length,3);
+  assert.equal(calls.filter(call=>call.url.startsWith('https://api.github.com')).length,1,'Seeking reuses a server-cached signed location.');
+  await store.setMetadata('media-source:'+api.env.GITHUB_REPOSITORY+':42',{expiresAt:0,until:0});
+  let failures=0;const unavailable=createApp({fetcher:async()=>{failures++;return new Response(null,{status:503});}});
+  assert.equal((await unavailable.fetch(new Request('https://relay.test'+url),api.env)).status,502);
+  assert.equal((await unavailable.fetch(new Request('https://relay.test'+url),api.env)).status,503);
+  assert.equal(failures,1,'Upstream failures have shared backoff.');
+  await store.setMetadata('media-source:'+api.env.GITHUB_REPOSITORY+':42',{expiresAt:0,until:0});
+  await api.DB.prepare('UPDATE rate_limits SET count=400 WHERE id=?').bind('github-media-downloads').run();
+  assert.equal((await unavailable.fetch(new Request('https://relay.test'+url),api.env)).status,429);
+  assert.equal(failures,1,'The media quota reserves GitHub capacity for other operations.');
 });
 
 import {publishedMedia} from '../worker/media.js';
