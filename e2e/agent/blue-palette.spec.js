@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { installPlatformAPI, ticketFixture } from '../helpers/platform-api.js';
 
-// Fixture-backed presentation and interaction checks, without live API writes.
-const RED = 'rgb(153, 27, 27)';
-const HOVER = 'rgb(127, 29, 29)';
-const FOCUS = 'rgb(220, 38, 38)';
-const SOFT = 'rgb(254, 226, 226)';
-const SURFACE = 'rgb(255, 241, 242)';
+// Fixture-backed RLY-6 presentation and interaction checks, without live API writes.
+const BLUE = 'rgb(29, 78, 216)';
+const HOVER = 'rgb(30, 64, 175)';
+const FOCUS = 'rgb(59, 130, 246)';
+const SOFT = 'rgb(219, 234, 254)';
+const SURFACE = 'rgb(239, 246, 255)';
 const color = (locator, property) => locator.evaluate((node, property) => getComputedStyle(node)[property], property);
 
 async function usable(page, locator) {
@@ -32,6 +32,9 @@ async function navigation(page, name) {
   const link = page.locator('#sidebar').getByRole('link', { name: name === 'Tickets' ? /^Tickets(?:\s*\d+)?$/ : name, exact: true });
   await usable(page, link);
   await expect(page.locator('.nav-item.active')).toHaveCSS('background-color', SOFT);
+  await expect(page.locator('.nav-item.active')).toHaveCSS('color', BLUE);
+  await expect(page.locator('.nav-item.active svg')).toHaveCSS('color', BLUE);
+  await expect(page.locator('.nav-item.active')).toHaveCSS('border-left-color', BLUE);
   await readable(page.locator('.sidebar .nav-item, .side-user strong, .side-user small, .breadcrumb, #session-actions button'));
   await page.keyboard.press('Tab');
   await link.focus();
@@ -82,8 +85,9 @@ async function primaryStates(page, button) {
   await usable(page, button);
   // Move away first so desktop auto-hover cannot affect the base assertion.
   await page.mouse.move(0, 0);
-  await expect(button).toHaveCSS('background-color', RED);
+  await expect(button).toHaveCSS('background-color', BLUE);
   await expect(button).toHaveCSS('color', 'rgb(255, 255, 255)');
+  expect(contrast('rgb(255, 255, 255)', BLUE)).toBeGreaterThanOrEqual(4.5);
   await button.hover();
   await expect(button).toHaveCSS('background-color', HOVER);
   expect(contrast('rgb(255, 255, 255)', HOVER)).toBeGreaterThanOrEqual(4.5);
@@ -97,12 +101,12 @@ async function primaryStates(page, button) {
   await readable(button);
 }
 
-test('fixture-backed public workspace stays red on reload and preserves navigation and sign-in gates', { tag: '@mobile' }, async ({ page }) => {
+test('fixture-backed public workspace stays blue on reload and preserves navigation and sign-in gates', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page, { authenticated: false });
   await page.goto('/index.html');
   const primary = page.getByRole('button', { name: 'New ticket', exact: true });
   await primaryStates(page, primary);
-  await expect(page.locator('.inbox-callout')).toHaveCSS('background-image', 'linear-gradient(115deg, rgb(254, 226, 226), rgb(255, 241, 242))');
+  await expect(page.locator('.inbox-callout')).toHaveCSS('background-image', 'linear-gradient(115deg, rgb(219, 234, 254), rgb(239, 246, 255))');
   await readable(page.locator('.page-heading h1, .page-description, .stat-label, .stat-card small, .workflow-explainer p, .inbox-callout h2, .inbox-callout p, .app-footer'));
   await primary.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Maintainer sign-in' });
@@ -128,11 +132,11 @@ test('fixture-backed public workspace stays red on reload and preserves navigati
   await page.reload();
   await expect(page.locator('.signin-prompt')).toHaveCSS('background-color', SURFACE);
   await navigation(page, 'Overview');
-  await expect(primary).toHaveCSS('background-color', RED);
+  await expect(primary).toHaveCSS('background-color', BLUE);
   expect(api.requests.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
-test('fixture-backed ticket dialog and composer use red focus while statuses and identities stay distinct', { tag: '@mobile' }, async ({ page }) => {
+test('fixture-backed ticket dialog and composer use blue focus while statuses and identities stay distinct', { tag: '@mobile' }, async ({ page }) => {
   const api = await installPlatformAPI(page, {
     tickets: ['ready', 'queued', 'in_review', 'failed'].map((status, index) => ticketFixture({ id: `RLY-${index + 2}`, title: `${status} ticket`, status })),
   });
@@ -172,10 +176,16 @@ test('fixture-backed ticket dialog and composer use red focus while statuses and
   await readable(dialog.locator('h2, label, legend, .contributor-option, input:not([type="checkbox"]), textarea'));
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(draft).toHaveValue('Unsent feedback stays local.');
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Write a comment', exact: true })).toHaveCSS('background-color', SURFACE);
+  await navigation(page, 'Overview');
+  await expect(page.getByRole('button', { name: 'New ticket', exact: true })).toHaveCSS('background-color', BLUE);
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
   expect(api.requests.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
-for (const authenticated of [false, true]) test(`fixture-backed ${authenticated ? 'maintainer' : 'public'} inbox uses red selections and usable dialogs without theme writes`, { tag: '@mobile' }, async ({ page }) => {
+for (const authenticated of [false, true]) test(`fixture-backed ${authenticated ? 'maintainer' : 'public'} inbox uses blue selections and usable dialogs without theme writes`, { tag: '@mobile' }, async ({ page }) => {
   const messages = [1, 2].map(index => ({ id: `email-${index}`, ticketId: 'RLY-1', senderName: 'Jamie Parker', senderEmail: 'jamie@example.test', subject: `Customer request ${index}`, body: 'Please keep <img src=x onerror=alert(1)> as customer text.', createdAt: '2026-10-12T10:00:00Z' }));
   const api = await installPlatformAPI(page, { authenticated, messages });
   await page.goto('/inbox.html');
@@ -187,7 +197,7 @@ for (const authenticated of [false, true]) test(`fixture-backed ${authenticated 
   await message.click();
   await expect(message).toHaveClass(/selected/);
   await expect(message).toHaveCSS('background-color', SURFACE);
-  await expect.poll(() => color(message, 'boxShadow')).toContain(RED);
+  await expect.poll(() => color(message, 'boxShadow')).toContain(BLUE);
   await expect(page.getByRole('button', { name: messages[0].subject, exact: true })).not.toHaveClass(/selected/);
   await expect(page.locator('.mail-body')).toHaveText(messages[1].body);
   await expect(page.locator('.mail-body img')).toHaveCount(0);
@@ -204,7 +214,7 @@ for (const authenticated of [false, true]) test(`fixture-backed ${authenticated 
   await readable(dialog.locator('h2, p, label, button'));
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.reload();
-  await expect(primary).toHaveCSS('background-color', RED);
+  await expect(primary).toHaveCSS('background-color', BLUE);
   await expect(page.locator('.mail-item.selected')).toHaveCSS('background-color', SURFACE);
   const menu = page.getByRole('button', { name: 'Open navigation', exact: true });
   if (await menu.isVisible()) await menu.click();
@@ -220,5 +230,6 @@ for (const authenticated of [false, true]) test(`fixture-backed ${authenticated 
   await openTicket.click();
   await expect(page).toHaveURL(/#ticket\/RLY-1$/);
   await expect(page.locator('.ticket-breadcrumb')).toContainText('RLY-1');
+  expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
   expect(api.requests.filter(request => request.method !== 'GET')).toEqual([]);
 });
