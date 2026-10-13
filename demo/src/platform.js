@@ -100,9 +100,18 @@ function overview(){
     workspace.deployment?.sha&&el('p',{class:'deployment-note'},icon('check'),'Deployed revision ',el('code',{},workspace.deployment.sha.slice(0,7)),workspace.deployment.url&&link('Open deployment',workspace.deployment.url))];
 }
 function ticketsView(){
-  const search=el('input',{id:'ticket-search',type:'search',value:filters.query,placeholder:'Search titles, tags, or ticket IDs…','aria-label':'Search tickets',oninput:event=>{filters.query=event.target.value;reloadTicketList(250);}});
+  const search=el('input',{id:'ticket-search',type:'search',value:filters.query,placeholder:'Search titles, tags, or ticket IDs…','aria-label':'Search tickets',oninput:event=>{filters.query=event.target.value;updateClear();reloadTicketList(250);}});
+  const status=select('status-filter',[['','All statuses'],...Object.entries(STATUS)],filters.status,{'aria-label':'Filter by status',onchange:event=>{filters.status=event.target.value;updateClear();reloadTicketList();}});
+  const priority=select('priority-filter',[['','All priorities'],...Object.entries(PRIORITY)],filters.priority,{'aria-label':'Filter by priority',onchange:event=>{filters.priority=event.target.value;updateClear();reloadTicketList();}});
+  const clear=button('Clear',()=>{
+    filters={query:'',status:'',priority:''};
+    search.value='';status.value='';priority.value='';updateClear();
+    reloadTicketList();search.focus();
+  },'text-button');
+  const updateClear=()=>{clear.hidden=!(filters.query||filters.status||filters.priority);};
+  updateClear();
   return [heading('Tickets','Search every ticket. Refresh this list to see the latest changes.',[button('Refresh tickets',()=>reloadTicketList(),'button','refresh'),button('New ticket',()=>requireAuth(()=>openTicketForm()),'button primary','plus')]),
-    el('div',{class:'filter-toolbar'},el('label',{class:'search-field',for:'ticket-search'},icon('search'),search),select('status-filter',[['','All statuses'],...Object.entries(STATUS)],filters.status,{'aria-label':'Filter by status',onchange:event=>{filters.status=event.target.value;reloadTicketList();}}),select('priority-filter',[['','All priorities'],...Object.entries(PRIORITY)],filters.priority,{'aria-label':'Filter by priority',onchange:event=>{filters.priority=event.target.value;reloadTicketList();}}),button('Clear',()=>{filters={query:'',status:'',priority:''};renderMain();reloadTicketList();},'text-button')),
+    el('div',{class:'filter-toolbar'},el('label',{class:'search-field',for:'ticket-search'},icon('search'),search),status,priority,clear),
     el('section',{id:'ticket-list',class:'panel ticket-list','aria-label':'Tickets','aria-busy':ticketPage.loading},listContents())];
 }
 function listContents(){const page=ticketPage;return [el('div',{class:'list-heading'},el('span',{},'TICKET'),el('span',{role:'status'},page.total===null?(page.error?'Tickets unavailable':'Loading tickets…'):'Showing '+page.tickets.length+' of '+page.total+' '+(page.total===1?'ticket':'tickets'))),page.tickets.map(ticketLine),page.error?el('div',{class:'error-callout',role:'alert'},el('p',{},page.error),button('Retry ticket page',()=>loadTicketPage(page.retryAppend),'button')):!page.loading&&!page.tickets.length&&empty('No matching tickets','Try another search or create a new ticket.'),page.nextCursor&&!page.error&&el('div',{class:'pane-heading'},button(page.loading?'Loading tickets…':'Load more tickets',()=>loadTicketPage(true),'button',undefined,{disabled:page.loading}))];}
