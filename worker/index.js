@@ -1,6 +1,7 @@
 import { PEOPLE, PROJECTS, HttpError, assert, text, ticketInput, mentions, SHA, triageResult, evidenceResult, sha256, equalSecret } from './model.js';
 import { Store, now } from './db.js';
 import { GitHub } from './github.js';
+import { publishedMedia, serveMedia } from './media.js';
 
 const json=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json;charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extra}});
 const publicJob=job=>{const {description,version,...value}=job;return value;};
@@ -176,7 +177,7 @@ async function detail(store,github,id,{withPR=true,cache=false}={}) {
       }
     }
   if(pullRequest)pullRequest.canMerge=pullRequest.canMerge&&requestImplemented(ticket)&&ticket.status==='in_review'&&!ticket.activeJobId&&!ticket.mergePending&&!ticket.pendingAgent&&!ticket.pendingEvidenceJobId;
-  const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id})));
+  const evidence=jobs.filter(job=>job.status==='succeeded').flatMap(job=>(job.evidence||[]).map(item=>({...item,jobId:job.id,requestRevision:job.requestRevision||0})));
   return {ticket,comments,jobs:jobs.map(publicJob),evidence,pullRequest,integrationError};
 }
 async function stopForHuman(store,github,ticket) {
@@ -304,6 +305,7 @@ async function automationCallback(store,github,env,jobId,input) {
       assert(SHA.test(input.headSha)&&input.headSha===job.headSha&&input.headSha===ticket.headSha,'Evidence is for an old revision.',409,'stale_head');
       const current=await github.call('/pulls/'+ticket.prNumber);assert(current.head?.sha===job.headSha,'The PR changed during evidence collection.',409,'stale_head');
       evidence=evidenceResult(input.evidence,github.repository,input.headSha,runId);
+      if(input.media!==undefined)evidence.unshift(...await publishedMedia(input.media,{...job,runId},github));
     }
     if(job.kind==='triage')assert(ticket.description===job.description,'The ticket description changed during triage. Rerun triage.',409,'stale_description');
   }
@@ -368,6 +370,8 @@ export function createApp({fetcher=globalThis.fetch}={}) {
       }
       assert(env.DB,'The ticket database is not configured.',503);
       const store=new Store(env.DB),github=new GitHub(env,fetcher),path=url.pathname;
+      const mediaMatch=path.match(/^\/api\/evidence\/([a-f0-9-]{36})\/([1-9][0-9]*)\.(webm|png)$/);
+      if(mediaMatch&&['GET','HEAD'].includes(request.method))return await serveMedia(request,store,github,mediaMatch[1],Number(mediaMatch[2]),mediaMatch[3]);
       if(path.startsWith('/api/automation/')){
         assert(await equalSecret(request.headers.get('authorization'),'Bearer '+(env.RELAY_CALLBACK_SECRET||''))&&!!env.RELAY_CALLBACK_SECRET,'Invalid automation credential.',401);
         const match=path.match(/^\/api\/automation\/jobs\/([a-f0-9-]{36})$/);

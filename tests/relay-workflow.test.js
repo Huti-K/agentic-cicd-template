@@ -141,6 +141,9 @@ test('publish/report require isolated verification, trusted automation, and exac
   }
   assert.deepEqual(workflow.jobs.publish.needs, ['prepare', 'verify', 'verify-repair']);
   assert.deepEqual(workflow.jobs['evidence-report'].needs, ['prepare', 'verify', 'verify-repair']);
+  assert.equal(workflow.jobs['evidence-report'].permissions.contents, 'write');
+  assert.ok(workflow.jobs['evidence-report'].steps.some(step => step.with?.path === '.agent-output/recorded-media'));
+  assert.doesNotMatch(workflow.jobs['evidence-report'].steps.map(step => step.run || '').join('\n'), /npm |npx |demo\//);
   const commands = workflow.jobs.publish.steps.map(step => step.run || '').join('\n');
   assert.doesNotMatch(commands, /npm |npx |node scripts\//);
   assert.match(commands, /node \.relay-trusted\/scripts\/relay\/run\.mjs publish/);

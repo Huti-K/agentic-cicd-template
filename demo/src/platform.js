@@ -1,4 +1,4 @@
-import { STATUS, PRIORITY, copyTicketLink, safeURL, sourceURL, mentionAt, mentionParts, insertMention, requestNeedsImplementation, commentEvidence, mergeReadiness, createAPI } from './platform-core.js';
+import { STATUS, PRIORITY, copyTicketLink, safeURL, evidenceMediaURL, sourceURL, mentionAt, mentionParts, insertMention, requestNeedsImplementation, commentEvidence, mergeReadiness, createAPI } from './platform-core.js';
 
 const $ = selector => document.querySelector(selector);
 const inboxPage = document.body.dataset.page === 'inbox';
@@ -173,13 +173,43 @@ function prSection(){const pr=detail.pullRequest;if(!pr)return detail.ticket.prU
     pr.state==='open'&&el('div',{class:'merge-gate'},button('Approve and merge',()=>requireAuth(openMerge),'button primary','pr',{disabled:busy||!readiness.ready}),el('p',{},readiness.reason)));
 }
 function evidenceItem(item){
-  const href=safeURL(item.url),current=detail.pullRequest?.headSha||detail.ticket.headSha,same=!current||item.headSha===current;
-  const video=href&&item.kind==='video'&&/\.(mp4|webm)(?:\?|$)/i.test(href);
-  return el('article',{class:'evidence-item'},el('div',{class:'evidence-title'},icon(item.kind==='video'?'play':'file'),link(item.title,item.url,'evidence-link')),el('p',{class:'evidence-meta'},item.kind+' · '+(item.headSha||'').slice(0,7),!same&&el('span',{class:'older-revision'},'Earlier revision')),video&&el('video',{controls:true,preload:'none',src:href,'aria-label':item.title}),!href&&el('p',{class:'form-error'},'Evidence link unavailable.'));
+  const media=evidenceMediaURL(item.url),href=media||safeURL(item.url),current=detail.pullRequest?.headSha||detail.ticket.headSha,same=!current||item.headSha===current;
+  const video=item.kind==='video'&&media&&media.endsWith('.webm');
+  const unavailable=el('p',{class:'form-error',hidden:true,role:'status'},'This recording could not load. Try the download link or full report.');
+  const player=video&&el('video',{controls:true,playsinline:true,preload:'none',src:media,poster:evidenceMediaURL(item.poster),'aria-label':item.title,onerror:()=>{unavailable.hidden=false;},onloadeddata:()=>{unavailable.hidden=true;}});
+  return el('article',{'data-key':item.url,class:'evidence-item'+(video?' evidence-video':'')},el('div',{class:'evidence-title'},icon(video?'play':'file'),el('strong',{},item.title)),
+    video&&el('p',{class:'evidence-meta'},badge('success','Passed'),item.device==='mobile'?'Mobile':'Desktop',' · Recorded browser test · No audio'),
+    player,video&&unavailable,
+    el('p',{class:'evidence-meta'},'Revision '+(item.headSha||'').slice(0,7),!same&&el('span',{class:'older-revision'},'Earlier revision'),(item.requestRevision||0)!==(detail.ticket.requestRevision||0)&&el('span',{class:'older-revision'},'Request changed')),
+    href?el('a',{href,class:'evidence-link',target:'_blank',rel:'noopener noreferrer'},video?'Open recording':item.title):el('p',{class:'form-error'},'Evidence link unavailable.'));
 }
-function evidenceHelp(){return el('p',{class:'evidence-help'},'Download the ZIP and open the HTML report or a .webm recording. GitHub may ask you to sign in.');}
-function evidenceSection(){const evidence=detail.evidence||[];
-  return el('section',{class:'detail-card'},paneHeading('Evidence',el('span',{class:'count-pill'},evidence.length)),!evidence.length?el('p',{class:'muted small'},'The evidence agent can write and run end-to-end tests for the current PR. Reports, recordings, and artifacts will appear here.'):evidence.map(evidenceItem),evidence.length>0&&evidenceHelp());
+// Keep media and their ancestors connected while metadata changes around them.
+function reconcileNodes(host,fresh,patch){
+  const existing=new Map([...host.children].map(node=>[node.dataset.key,node]));
+  const keep=new Set();
+  fresh.forEach((next,index)=>{const old=existing.get(next.dataset.key),node=old?patch(old,next):next;keep.add(node);if(host.children[index]!==node)host.insertBefore(node,host.children[index]||null);});
+  for(const node of [...host.children])if(!keep.has(node))node.remove();
+}
+function patchEvidenceCard(old,next){
+  if(!old.querySelector('video')||old.querySelector('video').getAttribute('src')!==next.querySelector('video')?.getAttribute('src'))return next;
+  for(const selector of ['.evidence-title','.evidence-meta']){const before=old.querySelectorAll(selector),after=next.querySelectorAll(selector);before.forEach((node,index)=>node.replaceWith(after[index]));}
+  return old;
+}
+function patchEvidenceSection(old,next){
+  const selector=old.matches('.evidence-section')?'.evidence-grid':'.evidence-recordings';
+  const host=old.querySelector(selector),incoming=next.querySelector(selector);
+  reconcileNodes(host,[...incoming.children],patchEvidenceCard);
+  for(const selector of ['.pane-heading','.comment-evidence-heading','.comment-evidence-meta']){const before=old.querySelector(selector),after=next.querySelector(selector);if(before&&after)before.replaceWith(after);}
+  for(const paragraph of old.querySelectorAll(':scope > p'))paragraph.remove();
+  for(const paragraph of next.querySelectorAll(':scope > p')){if(paragraph.getAttribute('role')==='status')old.insertBefore(paragraph,host);else old.append(paragraph);}
+  return old;
+}
+function evidenceHelp(){return el('p',{class:'evidence-help'},'Recordings use controlled test data and demonstrate the linked PR revision. Download the ZIP for the full report, screenshots and traces. GitHub may ask you to sign in.');}
+function evidenceSection(){const evidence=detail.evidence||[],job=(detail.jobs||[]).find(job=>job.kind==='evidence'),running=job&&['queued','running'].includes(job.status);
+  const current=detail.pullRequest?.headSha||detail.ticket.headSha,hasCurrent=evidence.some(item=>item.kind==='video'&&item.headSha===current);
+  const status=running?'Recording this revision automatically. Videos will appear here when checks finish.':job?.status==='failed'?'Recording failed. Check the run details and use Generate evidence to retry.':!evidence.length?'Videos are generated automatically after implementation. No recording is available yet.':!hasCurrent?'No playable recording for this revision yet. Earlier results remain available below.':null;
+  return el('section',{class:'detail-card evidence-section','aria-label':'Evidence'},paneHeading('Evidence',el('span',{class:'count-pill'},evidence.filter(item=>item.kind==='video').length+' recording'+(evidence.filter(item=>item.kind==='video').length===1?'':'s'))),
+    status&&el('p',{class:'evidence-help',role:'status'},status),el('div',{class:'evidence-grid'},evidence.map(evidenceItem)),evidence.length>0&&evidenceHelp());
 }
 function commentResults(comment){
   const job=commentEvidence(comment,detail.jobs);if(!job)return null;
@@ -189,9 +219,22 @@ function commentResults(comment){
   return el('section',{class:'comment-evidence','aria-label':'E2E results'},
     el('div',{class:'comment-evidence-heading'},el('strong',{},'E2E browser results'),badge(job.status,job.status==='succeeded'?'Passed':'Failed')),
     el('div',{class:'comment-evidence-meta'},job.headSha&&el('code',{},job.headSha.slice(0,7)),earlier&&el('span',{class:'older-revision'},'Earlier revision'),changed&&el('span',{class:'older-revision'},'Request changed'),job.runUrl&&link('View test run',job.runUrl)),
-    evidence.map(evidenceItem),evidence.length?evidenceHelp():el('p',{class:'evidence-help'},'Open the test run for logs and any available failure screenshots or traces.'));
+    el('div',{class:'evidence-recordings'},evidence.map(item=>evidenceItem({...item,requestRevision:job.requestRevision||0}))),evidence.length?evidenceHelp():el('p',{class:'evidence-help'},'Open the test run for logs and any available failure screenshots or traces.'));
 }
-function renderComments(){const host=$('#comment-list');if(!host)return;const comments=(detail.comments||[]).slice().sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));host.replaceChildren(...(comments.length?comments.map(comment=>{const p=person(comment.authorId);return el('article',{class:'comment'},avatar(comment.authorId),el('div',{class:'comment-content'},el('header',{},el('strong',{},p?.name||'Contributor'),p?.handle==='ai'&&el('span',{class:'agent-label'},'AGENT'),comment.kind==='feedback'&&tag('Feedback'),el('time',{datetime:comment.createdAt,title:new Date(comment.createdAt).toLocaleString()},relative(comment.createdAt))),el('div',{class:'comment-body'},...mentionText(comment.body)),commentResults(comment)));}):[el('p',{class:'discussion-empty'},'Start the conversation. Share context, mention a teammate, or bring in @ai.')]));const count=$('#comment-count');if(count)count.textContent=comments.length>=300?'Latest 300':comments.length;}
+function renderComments(){
+  const host=$('#comment-list');if(!host)return;
+  const comments=(detail.comments||[]).slice().sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  const nodes=comments.length?comments.map(comment=>{const p=person(comment.authorId);return el('article',{class:'comment','data-key':comment.id},avatar(comment.authorId),el('div',{class:'comment-content'},el('header',{},el('strong',{},p?.name||'Contributor'),p?.handle==='ai'&&el('span',{class:'agent-label'},'AGENT'),comment.kind==='feedback'&&tag('Feedback'),el('time',{datetime:comment.createdAt,title:new Date(comment.createdAt).toLocaleString()},relative(comment.createdAt))),el('div',{class:'comment-body'},...mentionText(comment.body)),commentResults(comment)));}):[el('p',{class:'discussion-empty','data-key':'empty'},'Start the conversation. Share context, mention a teammate, or bring in @ai.')];
+  reconcileNodes(host,nodes,(old,next)=>{
+    const before=old.querySelector('.comment-evidence'),after=next.querySelector('.comment-evidence');
+    if(!before||!after)return next;
+    patchEvidenceSection(before,after);
+    old.querySelector('.comment-content > header').replaceWith(next.querySelector('.comment-content > header'));
+    old.querySelector('.comment-body').replaceWith(next.querySelector('.comment-body'));
+    return old;
+  });
+  const count=$('#comment-count');if(count)count.textContent=comments.length>=300?'Latest 300':comments.length;
+}
 function mentionText(text){return mentionParts(text,people().map(p=>p.handle)).map(part=>part.handle?el('span',{class:'mention'},part.text):part.text);}
 function composer(){
   if(!session.authenticated)return el('div',{id:'comment-composer',class:'signin-prompt'},icon('people'),el('div',{},el('strong',{},'Add your perspective.'),el('p',{},'Sign in to comment, mention contributors, and work with agents.')),button('Sign in to comment',openSignIn,'button'));
@@ -211,13 +254,20 @@ function composer(){
   return form;
 }
 function renderTicket(){
-  if(!detail)return;const t=detail.ticket;document.title=t.id+' · '+t.title+' · Relay';$('#main-content').className='ticket-page';
-  const composerNode=$('#comment-composer');const preserve=composerNode&&composerNode.dataset.ticket===t.id&&composerNode.dataset.auth===String(session.authenticated);
+  if(!detail)return;const t=detail.ticket,main=$('#main-content');document.title=t.id+' · '+t.title+' · Relay';main.className='ticket-page';
+  const composerNode=$('#comment-composer'),preserve=composerNode&&composerNode.dataset.ticket===t.id&&composerNode.dataset.auth===String(session.authenticated);
   const draftNode=preserve?composerNode:composer();draftNode.dataset.ticket=t.id;draftNode.dataset.auth=String(session.authenticated);
-  // Keep the actual editor node alive when a poll or mutation updates the surrounding ticket.
-  const focused=document.activeElement,selection=focused?.id==='comment-body'?[focused.selectionStart,focused.selectionEnd]:null;
-  $('#main-content').replaceChildren(el('div',{id:'ticket-header'},detailHeader()),el('div',{class:'ticket-layout'},el('div',{class:'ticket-main'},descriptionSection(),triageSection(),el('section',{class:'detail-card discussion-card'},paneHeading('Discussion',el('span',{class:'count-pill',id:'comment-count'},(detail.comments||[]).length)),el('div',{id:'comment-list',class:'comment-list'}),draftNode)),el('aside',{class:'ticket-properties','aria-label':'Ticket properties'},propertiesSection(),workflowSection(),prSection(),evidenceSection())));
-  renderComments();if(preserve&&focused&&draftNode.contains(focused)){focused.focus({preventScroll:true});if(selection)focused.setSelectionRange(...selection);}renderShell();
+  if(main.dataset.ticket===t.id&&$('#ticket-context')){
+    $('#ticket-header').replaceChildren(detailHeader());
+    $('#ticket-context').replaceChildren(...[descriptionSection(),triageSection()].filter(Boolean));
+    patchEvidenceSection(main.querySelector('.evidence-section'),evidenceSection());
+    main.querySelector('.ticket-properties').replaceChildren(...[propertiesSection(),workflowSection(),prSection()].filter(Boolean));
+    if(!preserve)composerNode.replaceWith(draftNode);
+  }else{
+    main.dataset.ticket=t.id;
+    main.replaceChildren(el('div',{id:'ticket-header'},detailHeader()),el('div',{class:'ticket-layout'},el('div',{class:'ticket-main'},el('div',{id:'ticket-context',style:'display:contents'},descriptionSection(),triageSection()),evidenceSection(),el('section',{class:'detail-card discussion-card'},paneHeading('Discussion',el('span',{class:'count-pill',id:'comment-count'},(detail.comments||[]).length)),el('div',{id:'comment-list',class:'comment-list'}),draftNode)),el('aside',{class:'ticket-properties','aria-label':'Ticket properties'},propertiesSection(),workflowSection(),prSection())));
+  }
+  renderComments();renderShell();
 }
 async function mutation(path,body,method='POST'){
   const target=activeTicket,result=await api(path,{method,body});

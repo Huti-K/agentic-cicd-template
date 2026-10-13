@@ -11,7 +11,7 @@ test('real Worker runtime authenticates writes, links an issue and dispatches na
   const calls = [];
   let redirectIssue = false;
   const runtime = new Miniflare(convertV4MiniflareOptions({
-    modules: ['index.js', 'model.js', 'db.js', 'github.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../worker/' + name, import.meta.url)) })),
+    modules: ['index.js', 'model.js', 'db.js', 'github.js', 'media.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../worker/' + name, import.meta.url)) })),
     modulesRoot: fileURLToPath(new URL('../worker/', import.meta.url)),
     compatibilityDate: '2026-10-11',
     d1Databases: ['DB'],
