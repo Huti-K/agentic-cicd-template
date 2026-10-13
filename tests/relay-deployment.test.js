@@ -79,6 +79,18 @@ test('deployment verification retries propagation delays and fails after its bou
 });
 
 const workflow = parse(await readFile('.github/workflows/cloudflare-deploy.yml', 'utf8'));
+test('Cloudflare is the automatic production deployment path without an optional Pages job', async () => {
+  const ci = await readFile('.github/workflows/ci.yml', 'utf8');
+  assert.doesNotMatch(ci, /PAGES_ENABLED|actions\/(?:upload-pages-artifact|deploy-pages)@/);
+  assert.equal(parse(ci).jobs.deploy, undefined);
+  assert.deepEqual(workflow.on.workflow_run, { workflows: ['CI'], types: ['completed'], branches: ['main'] });
+  assert.equal(workflow.jobs.deploy.name, 'Deploy and verify Cloudflare production');
+  for (const job of Object.values(workflow.jobs)) {
+    assert.notEqual(job['continue-on-error'], true);
+    assert.doesNotMatch(job.if || '', /vars\./);
+    for (const step of job.steps) assert.notEqual(step['continue-on-error'], true);
+  }
+});
 test('Cloudflare publication is serialized, main-only, and uses the successful CI artifact without rebuilding it', () => {
   assert.deepEqual(workflow.on.workflow_run, { workflows: ['CI'], types: ['completed'], branches: ['main'] });
   assert.equal(workflow.on.workflow_dispatch.inputs.ci_run_id.required, true);

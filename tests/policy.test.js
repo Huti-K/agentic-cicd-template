@@ -45,7 +45,11 @@ test('candidate verification gets no API secret and publishing does not execute 
   assert.match(JSON.stringify(fix['verify-patch']), /verify-regression\.mjs/);
 });
 test('deployment waits for all checks and reviews are gated to same-repository non-draft PRs', () => {
-  assert.ok(workflows['ci.yml'].jobs.deploy.needs.includes('verify'));
+  const deployment = workflows['cloudflare-deploy.yml'];
+  assert.deepEqual(deployment.on.workflow_run.workflows, ['CI']);
+  assert.match(deployment.jobs.gate.if, /conclusion == 'success'/);
+  assert.equal(deployment.jobs.deploy.needs, 'gate');
+  assert.equal(deployment.jobs.deploy.if, "needs.gate.outputs.deploy == 'true'");
   const condition = workflows['agent-review.yml'].jobs.prepare.if;
   assert.match(condition, /head\.repo\.full_name == github\.repository/);
   assert.match(condition, /!github\.event\.pull_request\.draft/);
