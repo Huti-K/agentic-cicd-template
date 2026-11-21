@@ -82,7 +82,7 @@ jobs:
           name: relay-job
           path: .agent-output
       - name: Triage source and documentation without executing the app
-        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .relay-trusted/.github/codex/relay-triage.md
@@ -150,7 +150,7 @@ jobs:
           name: relay-job
           path: .agent-output
       - name: Produce implementation or independent browser scenarios
-        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .relay-trusted/.github/codex/relay-${{ needs.prepare.outputs.kind }}.md
@@ -352,7 +352,7 @@ jobs:
           if [ -s .agent-output/proposed.patch ]; then git apply --index .agent-output/proposed.patch; fi
           node .relay-trusted/scripts/relay/run.mjs validate-patch
       - name: Repair only the reported failures in the existing candidate
-        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .relay-trusted/.github/codex/relay-repair.md
